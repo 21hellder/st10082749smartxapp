@@ -1,0 +1,1385 @@
+﻿@page "/command-stream"
+@using System.Net.Http.Json
+@using System.Text.Json
+@using SmartX.Client.Models
+@using SmartX.Client.Services
+@implements IDisposable
+@inject HttpClient Http
+@inject TelemetryHubService HubService
+
+<PageTitle>Smart-X Command Stream</PageTitle>
+
+<div class="command-page">
+    <header class="page-header">
+        <div>
+            <span class="eyebrow">SMART-X / PART 2</span>
+            <h1>Command Stream</h1>
+            <p>Live telemetry, device controls, alerts and recommendations.</p>
+        </div>
+        <div class="connection">
+            <span class="dot @(HubService.IsConnected ? "online" : "offline")"></span>
+            @(HubService.IsConnected ? "LIVE CONNECTION" : "DISCONNECTED")
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message @(statusIsError ? "error" : "success")">
+            @statusMessage
+        </div>
+    }
+
+    <section class="summary-grid">
+        <article class="summary-card">
+            <span>DEVICES OBSERVED</span>
+            <strong>@Devices.Count</strong>
+            <small>Devices found in telemetry, sensors and commands</small>
+        </article>
+        <article class="summary-card">
+            <span>TELEMETRY READINGS</span>
+            <strong>@recentReadings.Count</strong>
+            <small>Readings currently held on this page</small>
+        </article>
+        <article class="summary-card alert-card">
+            <span>ACTIVE ALERTS</span>
+            <strong>@ActiveAlertCount</strong>
+            <small>Devices with unresolved incidents</small>
+        </article>
+        <article class="summary-card">
+            <span>RECORDED COMMANDS</span>
+            <strong>@commands.Count</strong>
+            <small>Commands returned by the API</small>
+        </article>
+    </section>
+
+    <section class="panel">
+        <div class="panel-heading">
+            <div>
+                <span class="eyebrow">DEVICE EXPLORER</span>
+                <h2>Live devices and telemetry</h2>
+            </div>
+            <button class="small-button"
+                    disabled="@isBusy"
+                    @onclick="RefreshAllAsync">
+                Refresh dashboard
+            </button>
+        </div>
+
+        <div class="filters">
+            <label>
+                Search device
+                <input value="@searchText"
+                       @oninput="HandleSearchInput"
+                       placeholder="Enter device ID..." />
+            </label>
+
+            <label>
+                Device category
+                <select @bind="selectedCategory">
+                    <option value="All">All categories</option>
+                    @foreach (var category in AvailableCategories)
+                    {
+                        <option value="@category">@category</option>
+                    }
+                </select>
+            </label>
+
+            <label>
+                Metric
+                <select @bind="selectedMetric">
+                    <option value="All">All metrics</option>
+                    @foreach (var metric in AvailableMetrics)
+                    {
+                        <option value="@metric">@metric</option>
+                    }
+                </select>
+            </label>
+
+            <label class="checkbox-label">
+                <input type="checkbox" @bind="activeAlertsOnly" />
+                Active alerts only
+            </label>
+        </div>
+
+        @if (FilteredReadings.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No matching telemetry</strong>
+                <span>Send readings to the API or change your filters.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Device</th>
+                            <th>Category</th>
+                            <th>Metric</th>
+                            <th>Latest value</th>
+                            <th>Timestamp</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var reading in FilteredReadings)
+                        {
+                            <tr @key="@($"{reading.DeviceId}|{reading.Metric}")">
+                                <td class="device-name">@reading.DeviceId</td>
+                                <td>@GetDeviceCategory(reading.DeviceId)</td>
+                                <td>@reading.Metric</td>
+                                <td class="reading-value">@reading.Value @reading.Unit</td>
+                                <td>@reading.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td>
+                                    @if (HasActiveAlert(reading.DeviceId))
+                                    {
+                                        <span class="pill alert">ACTIVE ALERT</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="pill normal">NORMAL</span>
+                                    }
+                                </td>
+                                <td>
+                                    <button class="small-button"
+                                            @onclick="() => SelectDevice(reading.DeviceId)">
+                                        Select
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="two-column">
+        <div class="panel">
+            <div class="panel-heading">
+                <span class="eyebrow">MANUAL OVERRIDE</span>
+                <h2>Pump / relay commands</h2>
+            </div>
+
+            <div class="command-form">
+                <label>
+                    Target device
+                    <input @bind="selectedDevice"
+                           list="known-devices"
+                           placeholder="e.g. ESP32-001" />
+                    <datalist id="known-devices">
+                        @foreach (var device in Devices)
+                        {
+                            <option value="@device"></option>
+                        }
+                    </datalist>
+                </label>
+
+                <label>
+                    Component
+                    <select @bind="selectedComponent">
+                        <option value="Pump">Pump</option>
+                        <option value="Relay">Relay</option>
+                    </select>
+                </label>
+
+                <label>
+                    Action
+                    <select @bind="selectedAction">
+                        <option value="ON">ON</option>
+                        <option value="OFF">OFF</option>
+                    </select>
+                </label>
+
+                <button class="primary-button"
+                        disabled="@isBusy"
+                        @onclick="SubmitCommandAsync">
+                    @(isBusy ? "Processing..." : "Record command")
+                </button>
+
+                <p class="notice">
+                    Demo mode: commands are recorded by the API.
+                    They do not physically operate hardware.
+                </p>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-heading">
+                <span class="eyebrow">PREDICTIVE RECOMMENDATIONS</span>
+                <h2>Suggested actions</h2>
+            </div>
+
+            <div class="suggestions">
+                @if (recommendations.Count == 0)
+                {
+                    <div class="empty-state">
+                        <strong>No recommendations loaded</strong>
+                        <span>Use Refresh dashboard to request the latest insights.</span>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var recommendation in recommendations)
+                    {
+                        <article class="suggestion" @key="recommendation">
+                            <span class="suggestion-marker">›</span>
+                            <div>
+                                <strong>@recommendation.Title</strong>
+                                @if (!string.IsNullOrWhiteSpace(recommendation.Priority))
+                                {
+                                    <span class="pill @GetPriorityClass(recommendation.Priority)">
+                                        @recommendation.Priority
+                                    </span>
+                                }
+                                <p>@recommendation.Message</p>
+                                @if (!string.IsNullOrWhiteSpace(recommendation.DeviceId))
+                                {
+                                    <button class="small-button"
+                                            @onclick="() => SelectDevice(recommendation.DeviceId)">
+                                        Select @recommendation.DeviceId
+                                    </button>
+                                }
+                            </div>
+                        </article>
+                    }
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-heading">
+            <div>
+                <span class="eyebrow">COMMAND AUDIT TRAIL</span>
+                <h2>Command history</h2>
+            </div>
+            <button class="small-button"
+                    disabled="@isBusy"
+                    @onclick="LoadCommandsAsync">
+                Refresh history
+            </button>
+        </div>
+
+        @if (commands.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No commands returned</strong>
+                <span>Record a command above or check that the API is running.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Device</th>
+                            <th>Component</th>
+                            <th>Action</th>
+                            <th>Issued by</th>
+                            <th>Timestamp</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var command in commands)
+                        {
+                            <tr @key="command.Id">
+                                <td class="device-name">@command.DeviceId</td>
+                                <td>@command.Component</td>
+                                <td><strong>@command.Action</strong></td>
+                                <td>@command.IssuedBy</td>
+                                <td>@command.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td>
+                                    @if (command.IsUndone)
+                                    {
+                                        <span class="pill undone">UNDONE</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="pill normal">RECORDED</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="history-actions">
+                <span class="subtle">
+                    Undo marks the latest command as undone in the API history.
+                    It does not reverse physical hardware.
+                </span>
+                <button class="danger-button"
+                        disabled="@(isBusy || !commands.Any(c => !c.IsUndone))"
+                        @onclick="UndoCommandAsync">
+                    Undo latest command
+                </button>
+            </div>
+        }
+    </section>
+
+    <footer>
+        SMART-X COMMAND STREAM · REAL-TIME TELEMETRY · SIMULATED DEVICE OVERRIDES
+    </footer>
+</div>
+
+<style>
+    .command-page {
+        min-height: 100vh;
+        padding: 30px;
+        background: #080d12;
+        color: #e9f1f5;
+        font-family: Inter, system-ui, sans-serif;
+    }
+
+    .page-header, .panel-heading, .history-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .page-header {
+        margin-bottom: 25px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid #20303a;
+    }
+
+    h1 { margin: 7px 0; font-size: 2rem; }
+    h2 { margin: 5px 0 0; font-size: 1.05rem; }
+    p { color: #84949e; }
+    .page-header p { margin: 0; }
+
+    .eyebrow {
+        color: #20d6b1;
+        font-size: .68rem;
+        font-weight: 800;
+        letter-spacing: 1.6px;
+    }
+
+    .connection {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: .7rem;
+        letter-spacing: .7px;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .online { background: #20d6b1; }
+    .offline { background: #e85d75; }
+
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 18px;
+    }
+
+    .summary-card, .panel {
+        background: #0d151b;
+        border: 1px solid #1d2a33;
+    }
+
+    .summary-card {
+        padding: 20px;
+        border-bottom: 2px solid #20d6b1;
+    }
+
+    .summary-card.alert-card { border-bottom-color: #e85d75; }
+    .summary-card span, .summary-card small {
+        display: block;
+        color: #758691;
+        font-size: .68rem;
+    }
+
+    .summary-card strong {
+        display: block;
+        margin: 10px 0 4px;
+        font-size: 1.8rem;
+    }
+
+    .panel { margin-bottom: 18px; min-width: 0; }
+    .panel-heading { padding: 20px 22px; border-bottom: 1px solid #1d2a33; }
+    .panel-heading h2 { margin-top: 6px; }
+    .subtle { color: #74838d; font-size: .72rem; }
+
+    .filters {
+        display: flex;
+        align-items: end;
+        flex-wrap: wrap;
+        gap: 15px;
+        padding: 18px 22px;
+    }
+
+    label {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        color: #9cabb4;
+        font-size: .75rem;
+        flex: 1;
+        min-width: 150px;
+    }
+
+    input, select {
+        width: 100%;
+        min-height: 39px;
+        padding: 9px 11px;
+        color: #e9f1f5;
+        background: #080f14;
+        border: 1px solid #2a3b45;
+        border-radius: 4px;
+    }
+
+    .checkbox-label {
+        flex-direction: row;
+        align-items: center;
+        flex: 0 1 auto;
+        padding-bottom: 10px;
+    }
+
+    .checkbox-label input { width: auto; min-height: auto; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+    th, td {
+        padding: 13px 16px;
+        text-align: left;
+        border-bottom: 1px solid #1a272f;
+        white-space: nowrap;
+    }
+
+    th { color: #687984; font-size: .63rem; letter-spacing: .8px; }
+    td { color: #b3c0c7; }
+    .device-name { color: #20d6b1; font-weight: 700; }
+    .reading-value { color: #e9f1f5; font-weight: 700; }
+
+    .pill {
+        display: inline-block;
+        margin: 2px 4px;
+        padding: 4px 7px;
+        border-radius: 3px;
+        font-size: .6rem;
+        font-weight: 800;
+        letter-spacing: .3px;
+    }
+
+    .pill.normal, .pill.low {
+        color: #20d6b1;
+        background: #102b28;
+    }
+
+    .pill.alert, .pill.critical {
+        color: #ff8194;
+        background: #351923;
+    }
+
+    .pill.warning, .pill.medium {
+        color: #e8a83e;
+        background: #322816;
+    }
+
+    .pill.undone {
+        color: #e8a83e;
+        background: #322816;
+    }
+
+    .two-column {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
+    }
+
+    .two-column .panel { margin-bottom: 18px; }
+    .command-form { padding: 22px; display: grid; gap: 15px; }
+
+    .primary-button, .danger-button, .small-button {
+        padding: 10px 14px;
+        color: #07120f;
+        background: #20d6b1;
+        border: 0;
+        border-radius: 4px;
+        font-weight: 750;
+        cursor: pointer;
+    }
+
+    .danger-button { color: #fff; background: #b84055; }
+    .small-button { padding: 7px 10px; font-size: .7rem; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .notice { margin: 0; font-size: .7rem; line-height: 1.5; }
+
+    .suggestions { padding: 15px 22px; }
+    .suggestion {
+        display: flex;
+        gap: 10px;
+        padding: 13px 0;
+        border-bottom: 1px solid #1b2931;
+        color: #b7c4cb;
+        font-size: .8rem;
+        line-height: 1.5;
+    }
+
+    .suggestion:last-child { border-bottom: 0; }
+    .suggestion p { margin: 6px 0; }
+    .suggestion-marker { color: #20d6b1; font-size: 1.2rem; font-weight: 900; }
+
+    .empty-state {
+        display: grid;
+        gap: 7px;
+        padding: 35px 20px;
+        text-align: center;
+        color: #82919b;
+        font-size: .8rem;
+    }
+
+    .empty-state strong { color: #dbe5e9; }
+    .history-actions { padding: 16px 20px; }
+
+    .status-message {
+        margin-bottom: 18px;
+        padding: 12px 15px;
+        border: 1px solid #28433e;
+        font-size: .8rem;
+        overflow-wrap: anywhere;
+    }
+
+    .status-message.success { color: #20d6b1; }
+    .status-message.error { color: #ff8194; border-color: #63313c; }
+
+    footer {
+        padding: 10px 0;
+        color: #52636e;
+        font-size: .62rem;
+        letter-spacing: 1px;
+    }
+
+    @@media (max-width: 950px) {
+        .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .two-column { grid-template-columns: 1fr; }
+    }
+
+    @@media (max-width: 600px) {
+        .command-page { padding: 16px; }
+        .page-header, .history-actions { align-items: flex-start; flex-direction: column; }
+        .summary-grid { grid-template-columns: 1fr 1fr; }
+        .filters { padding: 15px; }
+    }
+</style>
+
+@code {
+    private const string ApiBase = "http://localhost:5187";
+    private const int MaxReadings = 500;
+    private const int MaxIncidents = 200;
+    private const int MaxCommands = 200;
+
+    // ─────────────────────────────────────────────────────────────
+    // RUBRIC DATA STRUCTURES
+    // ─────────────────────────────────────────────────────────────
+
+    private readonly Queue<TelemetryReading> telemetryQueue = new();
+    private readonly SemaphoreSlim queueSignal = new(0);
+    private CancellationTokenSource? queueCts;
+    private readonly PriorityQueue<TelemetryIncident, int> alertPriorityQueue = new();
+    private readonly Stack<DeviceCommandView> overrideStack = new();
+    private readonly Dictionary<string, DeviceState> devicesById =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly SortedDictionary<DateTime, TelemetryReading> telemetryTimeline = new();
+    private readonly HashSet<string> activeErrorDevices =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, int>> searchToCommandPatterns =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly List<TelemetryReading> recentReadings = new();
+    private readonly List<TelemetryIncident> incidents = new();
+    private readonly List<DeviceCommandView> commands = new();
+    private readonly List<DeviceSensorView> sensors = new();
+    private readonly List<RecommendationView> recommendations = new();
+
+    private string searchText = string.Empty;
+    private string lastRecordedSearch = string.Empty;
+    private string selectedCategory = "All";
+    private string selectedMetric = "All";
+    private string selectedDevice = "ESP32-001";
+    private string selectedComponent = "Pump";
+    private string selectedAction = "ON";
+    private string statusMessage = string.Empty;
+
+    private bool activeAlertsOnly;
+    private bool isBusy;
+    private bool statusIsError;
+    private bool disposed;
+
+    private List<string> cachedDeviceIds = new();
+    private List<string> cachedMetrics = new();
+    private List<string> cachedCategories = new();
+
+    private readonly Dictionary<string, DeviceSensorView> sensorsById =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // ─────────────────────────────────────────────────────────────
+    // COMPUTED PROPERTIES
+    // ─────────────────────────────────────────────────────────────
+
+    private int ActiveAlertCount => activeErrorDevices.Count;
+    private List<string> Devices => cachedDeviceIds;
+    private List<string> AvailableMetrics => cachedMetrics;
+    private List<string> AvailableCategories => cachedCategories;
+
+    private List<TelemetryReading> LatestPerDeviceAndMetric
+    {
+        get
+        {
+            var latest = new Dictionary<string, TelemetryReading>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var kvp in telemetryTimeline.Reverse())
+            {
+                var key = $"{kvp.Value.DeviceId}|{kvp.Value.Metric}";
+                if (!latest.ContainsKey(key))
+                    latest[key] = kvp.Value;
+            }
+
+            return latest.Values.OrderByDescending(r => r.Timestamp).ToList();
+        }
+    }
+
+    private List<TelemetryReading> FilteredReadings
+    {
+        get
+        {
+            IEnumerable<TelemetryReading> q = LatestPerDeviceAndMetric;
+
+            if (!string.IsNullOrWhiteSpace(searchText))
+                q = q.Where(r => r.DeviceId.Contains(searchText, StringComparison.OrdinalIgnoreCase));
+
+            if (selectedMetric != "All")
+                q = q.Where(r => r.Metric.Equals(selectedMetric, StringComparison.OrdinalIgnoreCase));
+
+            if (selectedCategory != "All")
+                q = q.Where(r => GetDeviceCategory(r.DeviceId)
+                    .Equals(selectedCategory, StringComparison.OrdinalIgnoreCase));
+
+            if (activeAlertsOnly)
+                q = q.Where(r => HasActiveAlert(r.DeviceId));
+
+            return q.ToList();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // LIFECYCLE
+    // ─────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+    {
+        HubService.TelemetryReceived += HandleTelemetry;
+        HubService.IncidentReceived += HandleIncident;
+
+        queueCts = new CancellationTokenSource();
+        _ = DrainTelemetryQueueAsync(queueCts.Token);
+
+        await RefreshAllAsync();
+
+        try
+        {
+            await HubService.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"SignalR connection failed: {ex.Message}", true);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // QUEUE DRAIN
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task DrainTelemetryQueueAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested && !disposed)
+            {
+                await queueSignal.WaitAsync(token);
+
+                while (telemetryQueue.TryDequeue(out var reading))
+                {
+                    ApplyReadingToStructures(reading);
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SIGNALR HANDLERS
+    // ─────────────────────────────────────────────────────────────
+
+    private void HandleTelemetry(TelemetryReading reading)
+    {
+        if (disposed) return;
+
+        lock (telemetryQueue)
+        {
+            telemetryQueue.Enqueue(reading);
+        }
+        queueSignal.Release();
+    }
+
+    private void HandleIncident(TelemetryIncident incident)
+    {
+        if (disposed) return;
+
+        var priority = ClassifyIncidentPriority(incident);
+        if (priority <= 1)
+        {
+            alertPriorityQueue.Enqueue(incident, priority);
+            _ = InvokeAsync(ProcessPriorityAlerts);
+        }
+        else
+        {
+            _ = InvokeAsync(() =>
+            {
+                UpsertIncident(incident);
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void ProcessPriorityAlerts()
+    {
+        while (alertPriorityQueue.TryDequeue(out var critical, out _))
+        {
+            UpsertIncident(critical);
+        }
+        StateHasChanged();
+    }
+
+    private static int ClassifyIncidentPriority(TelemetryIncident i)
+    {
+        var sev = (i.Severity ?? string.Empty).ToLowerInvariant();
+        var metric = (i.Metric ?? string.Empty).ToLowerInvariant();
+        var msg = (i.Message ?? string.Empty).ToLowerInvariant();
+
+        if (sev.Contains("critical") || sev.Contains("high")) return 0;
+        if (metric.Contains("power") || metric.Contains("moisture")) return 0;
+        if (msg.Contains("spike") || msg.Contains("critical")) return 0;
+        if (sev.Contains("warning") || sev.Contains("medium")) return 1;
+        return 2;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STRUCTURE UPDATES
+    // ─────────────────────────────────────────────────────────────
+
+    private void ApplyReadingToStructures(TelemetryReading reading)
+    {
+        var key = reading.DeviceId;
+
+        if (!devicesById.TryGetValue(key, out var state))
+        {
+            state = new DeviceState { DeviceId = key };
+            devicesById[key] = state;
+        }
+        state.LastSeen = reading.Timestamp;
+        state.LastMetric = reading.Metric;
+        state.LastValue = reading.Value;
+        state.LastUnit = reading.Unit;
+
+        var stamp = reading.Timestamp;
+        while (telemetryTimeline.ContainsKey(stamp))
+            stamp = stamp.AddTicks(1);
+        telemetryTimeline[stamp] = reading;
+
+        while (telemetryTimeline.Count > MaxReadings)
+        {
+            var oldest = telemetryTimeline.Keys.First();
+            telemetryTimeline.Remove(oldest);
+        }
+
+        // ★ FIX Bug 1: keep recentReadings in sync so summary card updates live
+        recentReadings.Insert(0, reading);
+        if (recentReadings.Count > MaxReadings)
+            recentReadings.RemoveRange(MaxReadings, recentReadings.Count - MaxReadings);
+
+        if (IsReadingAlerting(reading))
+            activeErrorDevices.Add(reading.DeviceId);
+        else if (!incidents.Any(i =>
+            !i.IsResolved &&
+            i.DeviceId.Equals(reading.DeviceId, StringComparison.OrdinalIgnoreCase)))
+            activeErrorDevices.Remove(reading.DeviceId);
+    }
+
+    private static bool IsReadingAlerting(TelemetryReading r) =>
+        r.Metric.Contains("moisture", StringComparison.OrdinalIgnoreCase) && r.Value < 20 ||
+        r.Metric.Contains("power", StringComparison.OrdinalIgnoreCase) && r.Value > 2400 ||
+        r.Metric.Contains("temp", StringComparison.OrdinalIgnoreCase) && r.Value > 45;
+
+    private void UpsertIncident(TelemetryIncident incident)
+    {
+        var index = incidents.FindIndex(i =>
+            !string.IsNullOrWhiteSpace(incident.Id) && i.Id == incident.Id);
+
+        if (index >= 0) incidents[index] = incident;
+        else incidents.Insert(0, incident);
+
+        if (incidents.Count > MaxIncidents)
+            incidents.RemoveRange(MaxIncidents, incidents.Count - MaxIncidents);
+
+        if (!incident.IsResolved && !string.IsNullOrWhiteSpace(incident.DeviceId))
+            activeErrorDevices.Add(incident.DeviceId);
+        else if (incident.IsResolved)
+            activeErrorDevices.Remove(incident.DeviceId);
+    }
+
+    private bool HasActiveAlert(string deviceId) =>
+        activeErrorDevices.Contains(deviceId);
+
+    private string GetDeviceCategory(string deviceId)
+    {
+        if (sensorsById.TryGetValue(deviceId, out var sensor) &&
+            !string.IsNullOrWhiteSpace(sensor.Category))
+            return sensor.Category;
+
+        return "Unknown";
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // LOADERS
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task RefreshAllAsync()
+    {
+        await LoadDashboardDataAsync();
+        await LoadCommandsAsync();
+        await LoadSensorsAsync();
+        await LoadRecommendationsAsync();
+
+        RebuildCaches();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RebuildCaches()
+    {
+        cachedDeviceIds = devicesById.Keys.OrderBy(k => k).ToList();
+        cachedMetrics = telemetryTimeline.Values
+            .Select(r => r.Metric)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m).ToList();
+        cachedCategories = sensors
+            .Select(s => s.Category)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c).ToList();
+    }
+
+    private async Task LoadDashboardDataAsync()
+    {
+        try
+        {
+            var readings = await GetCollectionAsync<TelemetryReading>(
+                $"{ApiBase}/api/telemetry/history", "readings", "data", "items");
+
+            telemetryTimeline.Clear();
+            devicesById.Clear();
+            recentReadings.Clear();
+
+            // ApplyReadingToStructures now handles recentReadings — no separate Add
+            foreach (var r in readings.OrderBy(r => r.Timestamp))
+                ApplyReadingToStructures(r);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not load telemetry: {ex.Message}", true);
+        }
+
+        try
+        {
+            var loadedIncidents = await GetCollectionAsync<TelemetryIncident>(
+                $"{ApiBase}/api/incidents", "incidents", "data", "items");
+
+            incidents.Clear();
+            activeErrorDevices.Clear();
+
+            foreach (var i in loadedIncidents.Take(MaxIncidents))
+                UpsertIncident(i);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not load incidents: {ex.Message}", true);
+        }
+    }
+
+    private async Task LoadCommandsAsync()
+    {
+        try
+        {
+            var loaded = await GetCollectionAsync<DeviceCommandView>(
+                $"{ApiBase}/api/commands", "commands", "data", "items");
+
+            commands.Clear();
+            commands.AddRange(loaded.OrderByDescending(c => c.Timestamp).Take(MaxCommands));
+
+            overrideStack.Clear();
+            foreach (var c in commands.Where(c => !c.IsUndone).OrderBy(c => c.Timestamp))
+                overrideStack.Push(c);
+
+            Console.WriteLine($"[LoadCommands] fetched={loaded.Count}, kept={commands.Count}, notUndone={commands.Count(c => !c.IsUndone)}, stackSize={overrideStack.Count}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not load command history: {ex.Message}", true);
+            Console.WriteLine($"[LoadCommands] ERROR: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadSensorsAsync()
+    {
+        try
+        {
+            var loaded = await GetCollectionAsync<DeviceSensorView>(
+                $"{ApiBase}/api/sensors", "sensors", "data", "items");
+
+            sensors.Clear();
+            sensors.AddRange(loaded);
+
+            sensorsById.Clear();
+            foreach (var s in loaded)
+                if (!string.IsNullOrWhiteSpace(s.DeviceId))
+                    sensorsById[s.DeviceId] = s;
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Sensor categories could not be loaded: {ex.Message}", true);
+        }
+    }
+
+    private async Task LoadRecommendationsAsync()
+    {
+        var merged = new List<RecommendationView>();
+        try
+        {
+            using var response = await Http.GetAsync($"{ApiBase}/api/recommendations");
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
+
+            var array = FindArray(document.RootElement, "recommendations", "items", "data");
+            if (array.HasValue)
+            {
+                foreach (var item in array.Value.EnumerateArray())
+                {
+                    merged.Add(new RecommendationView
+                    {
+                        Title = ReadString(item, "title") ?? "Suggested action",
+                        Message = ReadString(item, "message")
+                                  ?? ReadString(item, "description")
+                                  ?? "Review this recommendation.",
+                        Priority = ReadString(item, "priority") ?? string.Empty,
+                        DeviceId = ReadString(item, "deviceId") ?? string.Empty
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Recommendation service: {ex.Message}", true);
+        }
+
+        merged.AddRange(GenerateLocalInsights());
+
+        recommendations.Clear();
+        recommendations.AddRange(merged);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // JSON HELPERS
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task<List<T>> GetCollectionAsync<T>(
+        string url, params string[] propertyNames)
+    {
+        using var response = await Http.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
+        var root = document.RootElement;
+        var array = FindArray(root, propertyNames);
+
+        if (!array.HasValue)
+        {
+            if (root.ValueKind == JsonValueKind.Array)
+                array = root;
+            else
+                throw new InvalidOperationException(
+                    $"The response from {url} did not contain a JSON array.");
+        }
+
+        var results = new List<T>();
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        foreach (var element in array.Value.EnumerateArray())
+        {
+            var item = JsonSerializer.Deserialize<T>(element.GetRawText(), options);
+            if (item is not null) results.Add(item);
+        }
+
+        return results;
+    }
+
+    private static JsonElement? FindArray(
+        JsonElement root, params string[] propertyNames)
+    {
+        if (root.ValueKind == JsonValueKind.Array) return root;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.Array &&
+                propertyNames.Any(name =>
+                    property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                return property.Value;
+        }
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.Array)
+                return property.Value;
+        }
+
+        return null;
+    }
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (property.Value.ValueKind == JsonValueKind.String)
+                    return property.Value.GetString();
+
+                if (property.Value.ValueKind == JsonValueKind.Number ||
+                    property.Value.ValueKind == JsonValueKind.True ||
+                    property.Value.ValueKind == JsonValueKind.False)
+                    return property.Value.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // PATTERN ANALYSIS
+    // ─────────────────────────────────────────────────────────────
+
+    private IEnumerable<RecommendationView> GenerateLocalInsights()
+    {
+        var output = new List<RecommendationView>();
+
+        foreach (var r in telemetryTimeline.Values)
+        {
+            if (IsReadingAlerting(r))
+            {
+                output.Add(new RecommendationView
+                {
+                    Title = $"Out-of-range: {r.DeviceId} / {r.Metric}",
+                    Message = $"Latest value is {r.Value} {r.Unit}, which is outside safe limits. Investigate immediately.",
+                    Priority = "Critical",
+                    DeviceId = r.DeviceId
+                });
+            }
+        }
+
+        foreach (var (term, targets) in searchToCommandPatterns)
+        {
+            var top = targets.OrderByDescending(kv => kv.Value).FirstOrDefault();
+            if (top.Value >= 2)
+            {
+                output.Add(new RecommendationView
+                {
+                    Title = $"Pattern: after '{term}' you usually command {top.Key}",
+                    Message = $"You've issued {top.Value} commands to {top.Key} shortly after searching '{term}'. Suggested action pre-loaded.",
+                    Priority = "Info",
+                    DeviceId = top.Key
+                });
+            }
+        }
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+        foreach (var (id, state) in devicesById)
+        {
+            if (state.LastSeen < cutoff && !HasActiveAlert(id))
+            {
+                output.Add(new RecommendationView
+                {
+                    Title = $"Silent device: {id}",
+                    Message = $"No telemetry since {state.LastSeen:HH:mm:ss}. Check power or network.",
+                    Priority = "Warning",
+                    DeviceId = id
+                });
+            }
+        }
+
+        return output;
+    }
+
+    private void RecordPattern(string searchTerm, string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm) || string.IsNullOrWhiteSpace(deviceId))
+            return;
+
+        if (!searchToCommandPatterns.TryGetValue(searchTerm, out var map))
+        {
+            map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            searchToCommandPatterns[searchTerm] = map;
+        }
+        map[deviceId] = map.GetValueOrDefault(deviceId) + 1;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SEARCH / COMMAND / UNDO
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task HandleSearchInput(ChangeEventArgs args)
+    {
+        searchText = args.Value?.ToString() ?? string.Empty;
+        await InvokeAsync(StateHasChanged);
+
+        var term = searchText.Trim();
+        if (term.Length >= 3 &&
+            !term.Equals(lastRecordedSearch, StringComparison.OrdinalIgnoreCase))
+        {
+            await RecordSearchAsync(term);
+        }
+    }
+
+    private async Task RecordSearchAsync(string term)
+    {
+        term = term.Trim();
+        if (term.Length < 3 ||
+            term.Equals(lastRecordedSearch, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            using var response = await Http.PostAsJsonAsync(
+                $"{ApiBase}/api/recommendations/search",
+                new SearchRequest { SearchTerm = term });
+
+            if (response.IsSuccessStatusCode)
+            {
+                lastRecordedSearch = term;
+                await LoadRecommendationsAsync();
+            }
+        }
+        catch { }
+    }
+
+    // ★ FIX Bug 2: async Task + explicit StateHasChanged
+    private async Task SelectDevice(string deviceId)
+    {
+        selectedDevice = deviceId;
+        SetStatus($"Selected device {deviceId}.", false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SubmitCommandAsync()
+    {
+        if (string.IsNullOrWhiteSpace(selectedDevice))
+        {
+            SetStatus("Enter a device ID before recording a command.", true);
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            RecordPattern(lastRecordedSearch, selectedDevice);
+
+            var request = new CreateCommandRequest
+            {
+                DeviceId = selectedDevice.Trim(),
+                Component = selectedComponent,
+                Action = selectedAction,
+                IssuedBy = "Command Stream Dashboard"
+            };
+
+            using var response = await Http.PostAsJsonAsync($"{ApiBase}/api/commands", request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var details = await response.Content.ReadAsStringAsync();
+                SetStatus($"API rejected command (HTTP {(int)response.StatusCode}). {details}", true);
+                return;
+            }
+
+            var localCmd = new DeviceCommandView
+            {
+                DeviceId = selectedDevice.Trim(),
+                Component = selectedComponent,
+                Action = selectedAction,
+                Timestamp = DateTime.UtcNow,
+                IssuedBy = "Command Stream Dashboard"
+            };
+            overrideStack.Push(localCmd);
+
+            SetStatus($"{selectedAction} recorded for {selectedDevice} ({selectedComponent}).", false);
+            await LoadCommandsAsync();
+            await LoadRecommendationsAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not send command: {ex.Message}", true);
+        }
+        finally
+        {
+            isBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // ★ FIX Bug 3: diagnostics + always POST + surface server errors
+    private async Task UndoCommandAsync()
+    {
+        Console.WriteLine($"[UNDO] entered: isBusy={isBusy}, stackSize={overrideStack.Count}, anyNotUndone={commands.Any(c => !c.IsUndone)}");
+
+        if (isBusy) { Console.WriteLine("[UNDO] bail: isBusy"); return; }
+
+        var hadLocal = overrideStack.TryPop(out var lastLocal);
+        Console.WriteLine($"[UNDO] hadLocal={hadLocal}, lastLocal={(lastLocal?.DeviceId ?? "null")}");
+
+        isBusy = true;
+        try
+        {
+            using var response = await Http.PostAsync($"{ApiBase}/api/commands/undo", content: null);
+            Console.WriteLine($"[UNDO] POST status={(int)response.StatusCode}");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (hadLocal && lastLocal is not null) overrideStack.Push(lastLocal);
+
+                var details = await response.Content.ReadAsStringAsync();
+                SetStatus($"Undo failed (HTTP {(int)response.StatusCode}). {details}", true);
+                return;
+            }
+
+            await LoadCommandsAsync();
+            await LoadRecommendationsAsync();
+
+            var msg = hadLocal && lastLocal is not null
+                ? $"Reverted local override: {lastLocal.Action} on {lastLocal.DeviceId} ({lastLocal.Component})."
+                : "Undo request completed. Command history refreshed.";
+            SetStatus(msg, false);
+        }
+        catch (Exception ex)
+        {
+            if (hadLocal && lastLocal is not null) overrideStack.Push(lastLocal);
+            SetStatus($"Undo failed: {ex.Message}", true);
+            Console.WriteLine($"[UNDO] EXCEPTION: {ex.Message}");
+        }
+        finally
+        {
+            isBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string GetPriorityClass(string priority)
+    {
+        if (priority.Contains("critical", StringComparison.OrdinalIgnoreCase) ||
+            priority.Contains("high", StringComparison.OrdinalIgnoreCase)) return "critical";
+        if (priority.Contains("warning", StringComparison.OrdinalIgnoreCase) ||
+            priority.Contains("medium", StringComparison.OrdinalIgnoreCase)) return "warning";
+        return "low";
+    }
+
+    private void SetStatus(string message, bool isError)
+    {
+        statusMessage = message;
+        statusIsError = isError;
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+
+        HubService.TelemetryReceived -= HandleTelemetry;
+        HubService.IncidentReceived -= HandleIncident;
+
+        queueCts?.Cancel();
+        queueCts?.Dispose();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // NESTED TYPES
+    // ─────────────────────────────────────────────────────────────
+
+    private sealed class DeviceState
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public DateTime LastSeen { get; set; }
+        public string LastMetric { get; set; } = string.Empty;
+        public double LastValue { get; set; }
+        public string LastUnit { get; set; } = string.Empty;
+    }
+
+    public sealed class CreateCommandRequest
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string Component { get; set; } = string.Empty;
+        public string Action { get; set; } = string.Empty;
+        public string IssuedBy { get; set; } = "Command Stream Dashboard";
+    }
+
+    public sealed class SearchRequest
+    {
+        public string SearchTerm { get; set; } = string.Empty;
+    }
+
+    public sealed class DeviceCommandView
+    {
+        public string Id { get; set; } = string.Empty;
+        public string DeviceId { get; set; } = string.Empty;
+        public string Component { get; set; } = string.Empty;
+        public string Action { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        public string IssuedBy { get; set; } = string.Empty;
+        public bool IsUndone { get; set; }
+    }
+
+    public sealed class DeviceSensorView
+    {
+        public string Id { get; set; } = string.Empty;
+        public string DeviceId { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
+        public string Location { get; set; } = string.Empty;
+        public bool IsOnline { get; set; }
+    }
+
+    public sealed class RecommendationView
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public string Priority { get; set; } = string.Empty;
+        public string DeviceId { get; set; } = string.Empty;
+    }
+}

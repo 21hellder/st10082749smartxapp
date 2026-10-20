@@ -1,0 +1,524 @@
+@page "/telemetry"
+
+@using SmartX.Client.Models
+@using SmartX.Client.Services
+
+@implements IDisposable
+
+@inject TelemetryHubService HubService
+
+<PageTitle>Telemetry | Smart-X</PageTitle>
+
+<div class="telemetry-page">
+
+<div class="page-header">
+    <div>
+        <div class="eyebrow">LIVE DATA STREAM</div>
+        <h1>Telemetry</h1>
+        <p>Real-time sensor measurements received from the Smart-X gateway.</p>
+    </div>
+
+    <div class="connection-status">
+        <span class="status-dot"></span>
+        @connectionText
+    </div>
+</div>
+
+<div class="stats-grid">
+
+    <div class="stat-card">
+        <span class="stat-label">READINGS RECEIVED</span>
+        <strong>@totalReadings</strong>
+        <span class="stat-description">Current session</span>
+    </div>
+
+    <div class="stat-card">
+        <span class="stat-label">DEVICES ACTIVE</span>
+        <strong>@ActiveDeviceCount</strong>
+        <span class="stat-description">Unique ESP32 devices</span>
+    </div>
+
+    <div class="stat-card">
+        <span class="stat-label">TEMPERATURE</span>
+        <strong>@LatestTemperatureDisplay</strong>
+        <span class="stat-description">Latest reading</span>
+    </div>
+
+    <div class="stat-card">
+        <span class="stat-label">POWER</span>
+        <strong>@LatestPowerDisplay</strong>
+        <span class="stat-description">Latest reading</span>
+    </div>
+
+</div>
+
+<div class="stream-panel">
+
+    <div class="panel-header">
+        <div>
+            <span class="panel-kicker">STREAM MONITOR</span>
+            <h2>Incoming Telemetry</h2>
+        </div>
+
+        <button class="clear-button" @onclick="ClearReadings">
+            Clear Stream
+        </button>
+    </div>
+
+    @if (recentTelemetry.Count == 0)
+    {
+        <div class="empty-state">
+            <div class="empty-icon">◉</div>
+            <h3>Waiting for telemetry</h3>
+            <p>
+                Send telemetry to the API and incoming readings
+                will appear here automatically.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="table-wrapper">
+
+            <table class="telemetry-table">
+
+                <thead>
+                    <tr>
+                        <th>TIME</th>
+                        <th>DEVICE</th>
+                        <th>METRIC</th>
+                        <th>VALUE</th>
+                        <th>UNIT</th>
+                        <th>STATUS</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    @foreach (var reading in recentTelemetry)
+                    {
+                        <tr>
+
+                            <td class="time-cell">
+                                @reading.Timestamp.ToLocalTime().ToString("HH:mm:ss")
+                            </td>
+
+                            <td class="device-cell">
+                                @reading.DeviceId
+                            </td>
+
+                            <td>
+                                <span class="metric-badge">
+                                    @reading.Metric
+                                </span>
+                            </td>
+
+                            <td class="value-cell">
+                                @reading.Value.ToString("0.##")
+                            </td>
+
+                            <td>
+                                @reading.Unit
+                            </td>
+
+                            <td>
+                                @if (IsAnomalous(reading))
+                                {
+                                    <span class="reading-status warning">
+                                        ANOMALY
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="reading-status normal">
+                                        NORMAL
+                                    </span>
+                                }
+                            </td>
+
+                        </tr>
+                    }
+
+                </tbody>
+
+            </table>
+
+        </div>
+    }
+
+</div>
+
+<div class="info-panel">
+
+    <div class="info-icon">i</div>
+
+    <div>
+        <strong>How this works</strong>
+        <p>
+            ESP32 telemetry is received by the .NET 10 API,
+            validated, stored and analysed for anomalies.
+            SignalR then broadcasts accepted readings to connected
+            Smart-X dashboard clients in real time.
+        </p>
+    </div>
+
+</div>
+
+</div>
+
+<style>
+
+    .telemetry-page {
+        padding: 32px;
+        max-width: 1500px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 30px;
+        gap: 20px;
+    }
+
+    .eyebrow,
+    .panel-kicker {
+        color: #7c8cff;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 2px;
+    }
+
+    .page-header h1 {
+        margin: 6px 0;
+        font-size: 36px;
+        font-weight: 750;
+        letter-spacing: -1px;
+    }
+
+    .page-header p {
+        margin: 0;
+        color: #8c96a8;
+    }
+
+    .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 15px;
+        border: 1px solid rgba(255,255,255,.08);
+        border-radius: 8px;
+        color: #aeb7c8;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #55d88a;
+        box-shadow: 0 0 12px rgba(85,216,138,.7);
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .stat-card {
+        padding: 20px;
+        border: 1px solid rgba(255,255,255,.07);
+        border-radius: 12px;
+        background: rgba(255,255,255,.025);
+    }
+
+    .stat-label {
+        display: block;
+        color: #6f7888;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 1.4px;
+    }
+
+    .stat-card strong {
+        display: block;
+        margin: 10px 0 5px;
+        font-size: 27px;
+        font-weight: 750;
+    }
+
+    .stat-description {
+        color: #667085;
+        font-size: 11px;
+    }
+
+    .stream-panel {
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.07);
+        border-radius: 13px;
+        background: rgba(255,255,255,.02);
+    }
+
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 21px 24px;
+        border-bottom: 1px solid rgba(255,255,255,.07);
+    }
+
+    .panel-header h2 {
+        margin: 5px 0 0;
+        font-size: 18px;
+    }
+
+    .clear-button {
+        padding: 8px 13px;
+        border: 1px solid rgba(255,255,255,.1);
+        border-radius: 7px;
+        background: transparent;
+        color: #929bad;
+        cursor: pointer;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .8px;
+    }
+
+    .clear-button:hover {
+        background: rgba(255,255,255,.05);
+        color: white;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+    }
+
+    .telemetry-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .telemetry-table th {
+        padding: 13px 20px;
+        background: rgba(255,255,255,.025);
+        color: #687284;
+        text-align: left;
+        font-size: 9px;
+        letter-spacing: 1.2px;
+    }
+
+    .telemetry-table td {
+        padding: 15px 20px;
+        border-top: 1px solid rgba(255,255,255,.045);
+        color: #aeb7c8;
+        font-size: 12px;
+    }
+
+    .telemetry-table tbody tr:hover {
+        background: rgba(255,255,255,.025);
+    }
+
+    .time-cell {
+        color: #687284 !important;
+        font-family: monospace;
+    }
+
+    .device-cell {
+        color: #dce2ed !important;
+        font-family: monospace;
+        font-weight: 600;
+    }
+
+    .value-cell {
+        color: white !important;
+        font-size: 13px !important;
+        font-weight: 700;
+    }
+
+    .metric-badge {
+        padding: 5px 8px;
+        border-radius: 5px;
+        background: rgba(124,140,255,.1);
+        color: #9ca8ff;
+        font-size: 10px;
+        font-weight: 700;
+    }
+
+    .reading-status {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: .8px;
+    }
+
+    .reading-status.normal {
+        color: #55d88a;
+    }
+
+    .reading-status.warning {
+        color: #ffb454;
+    }
+
+    .empty-state {
+        padding: 70px 20px;
+        text-align: center;
+    }
+
+    .empty-icon {
+        margin-bottom: 15px;
+        color: #6874ff;
+        font-size: 30px;
+    }
+
+    .empty-state h3 {
+        margin: 0 0 7px;
+        font-size: 17px;
+    }
+
+    .empty-state p {
+        max-width: 450px;
+        margin: auto;
+        color: #687284;
+        font-size: 12px;
+        line-height: 1.6;
+    }
+
+    .info-panel {
+        display: flex;
+        gap: 14px;
+        margin-top: 20px;
+        padding: 18px 20px;
+        border: 1px solid rgba(124,140,255,.12);
+        border-radius: 10px;
+        background: rgba(124,140,255,.035);
+    }
+
+    .info-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 23px;
+        height: 23px;
+        border: 1px solid rgba(124,140,255,.4);
+        border-radius: 50%;
+        color: #9ca8ff;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .info-panel strong {
+        font-size: 12px;
+    }
+
+    .info-panel p {
+        margin: 5px 0 0;
+        color: #737e90;
+        font-size: 11px;
+        line-height: 1.6;
+    }
+
+</style>
+
+@code {
+
+private readonly List<TelemetryReading> recentTelemetry = new();
+
+private string connectionText = "CONNECTING...";
+
+private int totalReadings;
+
+private TelemetryReading? LatestTemperature =>
+    recentTelemetry.FirstOrDefault(
+        x => x.Metric.Equals(
+            "Temperature",
+            StringComparison.OrdinalIgnoreCase));
+
+private TelemetryReading? LatestPower =>
+    recentTelemetry.FirstOrDefault(
+        x => x.Metric.Equals(
+            "Power",
+            StringComparison.OrdinalIgnoreCase));
+
+private string LatestTemperatureDisplay =>
+    LatestTemperature == null
+        ? "--"
+        : $"{LatestTemperature.Value:0.##}°C";
+
+private string LatestPowerDisplay =>
+    LatestPower == null
+        ? "--"
+        : $"{LatestPower.Value:0.##} W";
+
+private int ActiveDeviceCount =>
+    recentTelemetry
+        .Select(x => x.DeviceId)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+protected override async Task OnInitializedAsync()
+{
+    HubService.TelemetryReceived += HandleTelemetry;
+
+    try
+    {
+        await HubService.StartAsync();
+
+        connectionText = HubService.IsConnected
+            ? "LIVE CONNECTION"
+            : "DISCONNECTED";
+    }
+    catch
+    {
+        connectionText = "CONNECTION ERROR";
+    }
+}
+
+private void HandleTelemetry(TelemetryReading reading)
+{
+    recentTelemetry.Insert(0, reading);
+
+    totalReadings++;
+
+    if (recentTelemetry.Count > 50)
+    {
+        recentTelemetry.RemoveAt(recentTelemetry.Count - 1);
+    }
+
+    _ = InvokeAsync(StateHasChanged);
+}
+
+private bool IsAnomalous(TelemetryReading reading)
+{
+    if (reading.Metric.Equals(
+        "Temperature",
+        StringComparison.OrdinalIgnoreCase))
+    {
+        return reading.Value > 70;
+    }
+
+    if (reading.Metric.Equals(
+        "Power",
+        StringComparison.OrdinalIgnoreCase))
+    {
+        return reading.Value > 2000;
+    }
+
+    return false;
+}
+
+private void ClearReadings()
+{
+    recentTelemetry.Clear();
+    totalReadings = 0;
+}
+
+public void Dispose()
+{
+    HubService.TelemetryReceived -= HandleTelemetry;
+}
+
+}

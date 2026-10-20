@@ -1,0 +1,571 @@
+﻿@page "/incident-radar"
+@implements IDisposable
+@using SmartX.Client.Models
+@inject SmartX.Client.Services.TelemetryHubService HubService
+
+<PageTitle>Incident Radar | Smart-X</PageTitle>
+
+<div class="radar-page">
+
+    <div class="radar-header">
+        <div>
+            <div class="eyebrow">SMART-X / INCIDENT MONITORING</div>
+            <h1>Incident Radar</h1>
+            <p>Real-time anomaly detection and sensor health monitoring.</p>
+        </div>
+
+        <div class="connection-status">
+            <span class="status-dot"></span>
+            @connectionText
+        </div>
+    </div>
+
+    <div class="summary-grid">
+
+        <div class="summary-card critical-card">
+            <div class="summary-label">CRITICAL</div>
+            <div class="summary-value">@CriticalCount</div>
+            <div class="summary-description">Immediate attention required</div>
+        </div>
+
+        <div class="summary-card warning-card">
+            <div class="summary-label">WARNINGS</div>
+            <div class="summary-value">@WarningCount</div>
+            <div class="summary-description">Unusual telemetry detected</div>
+        </div>
+
+        <div class="summary-card">
+            <div class="summary-label">TOTAL INCIDENTS</div>
+            <div class="summary-value">@incidents.Count</div>
+            <div class="summary-description">Detected during this session</div>
+        </div>
+
+        <div class="summary-card">
+            <div class="summary-label">MONITORED DEVICES</div>
+            <div class="summary-value">@DeviceCount</div>
+            <div class="summary-description">Unique ESP32 devices</div>
+        </div>
+
+    </div>
+
+    <div class="radar-section">
+
+        <div class="section-heading">
+            <div>
+                <div class="eyebrow">LIVE DETECTION</div>
+                <h2>Active Incidents</h2>
+            </div>
+
+            <button class="clear-button" @onclick="ClearIncidents">
+                CLEAR RADAR
+            </button>
+        </div>
+
+        @if (incidents.Count == 0)
+        {
+            <div class="empty-state">
+                <div class="empty-icon">✓</div>
+                <h3>No active incidents</h3>
+                <p>
+                    Smart-X is monitoring incoming telemetry.
+                    Critical and warning anomalies will appear here automatically.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="incident-list">
+
+                @foreach (var incident in incidents)
+                {
+                    <div class="incident-card @(incident.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? "critical" : "warning")">
+
+                        <div class="incident-indicator"></div>
+
+                        <div class="incident-main">
+
+                            <div class="incident-top">
+                                <span class="severity">
+                                    @incident.Severity
+                                </span>
+
+                                <span class="incident-time">
+                                    @incident.Timestamp.ToLocalTime().ToString("HH:mm:ss")
+                                </span>
+                            </div>
+
+                            <h3>@incident.Message</h3>
+
+                            <div class="incident-device">
+                                <span>DEVICE</span>
+                                <strong>@incident.DeviceId</strong>
+                            </div>
+
+                            <div class="incident-metric">
+                                <span>METRIC</span>
+                                <strong>@incident.Metric</strong>
+                            </div>
+
+                        </div>
+
+                        <div class="incident-values">
+
+                            <div class="value-block">
+                                <span>PREVIOUS</span>
+                                <strong>@incident.PreviousValue.ToString("0.##") @incident.Unit</strong>
+                            </div>
+
+                            <div class="value-arrow">→</div>
+
+                            <div class="value-block current">
+                                <span>CURRENT</span>
+                                <strong>@incident.CurrentValue.ToString("0.##") @incident.Unit</strong>
+                            </div>
+
+                            <div class="value-block">
+                                <span>CHANGE</span>
+                                <strong>@incident.Difference.ToString("+0.##;-0.##;0") @incident.Unit</strong>
+                            </div>
+
+                        </div>
+
+                    </div>
+                }
+
+            </div>
+        }
+
+    </div>
+
+    <div class="radar-info">
+
+        <div class="info-icon">i</div>
+
+        <div>
+            <h3>How Incident Radar works</h3>
+            <p>
+                Telemetry is received from ESP32 devices and processed by the
+                .NET 10 API. The validation service checks the incoming data,
+                while the anomaly detection service compares readings and
+                identifies unusual values. SignalR then pushes new incidents
+                directly to this interface without requiring a page refresh.
+            </p>
+        </div>
+
+    </div>
+
+</div>
+
+<style>
+    .radar-page {
+        min-height: 100vh;
+        padding: 36px;
+        background: #080b10;
+        color: #f4f7fb;
+        font-family: Inter, Arial, sans-serif;
+    }
+
+    .radar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 24px;
+        margin-bottom: 32px;
+    }
+
+    .eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: #7d8796;
+        margin-bottom: 8px;
+    }
+
+    h1 {
+        margin: 0;
+        font-size: 34px;
+        letter-spacing: -1px;
+    }
+
+    .radar-header p {
+        margin: 8px 0 0;
+        color: #8f99a8;
+        font-size: 14px;
+    }
+
+    .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 14px;
+        border: 1px solid #202733;
+        border-radius: 8px;
+        background: #0d1118;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #aab4c2;
+    }
+
+    .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #42d392;
+        box-shadow: 0 0 10px #42d392;
+    }
+
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 30px;
+    }
+
+    .summary-card {
+        background: #0d1118;
+        border: 1px solid #202733;
+        border-radius: 10px;
+        padding: 20px;
+    }
+
+    .critical-card {
+        border-color: #4d252b;
+    }
+
+    .warning-card {
+        border-color: #4b3922;
+    }
+
+    .summary-label {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        color: #7d8796;
+    }
+
+    .summary-value {
+        margin-top: 8px;
+        font-size: 30px;
+        font-weight: 700;
+    }
+
+    .critical-card .summary-value {
+        color: #ff5c69;
+    }
+
+    .warning-card .summary-value {
+        color: #ffb454;
+    }
+
+    .summary-description {
+        margin-top: 5px;
+        font-size: 11px;
+        color: #687383;
+    }
+
+    .radar-section {
+        background: #0b0f15;
+        border: 1px solid #202733;
+        border-radius: 12px;
+        padding: 24px;
+    }
+
+    .section-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    h2 {
+        margin: 0;
+        font-size: 22px;
+    }
+
+    .clear-button {
+        border: 1px solid #303845;
+        background: #11161e;
+        color: #aeb7c4;
+        padding: 9px 13px;
+        border-radius: 7px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        cursor: pointer;
+    }
+
+    .clear-button:hover {
+        background: #181e27;
+        color: #ffffff;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 65px 20px;
+        border: 1px dashed #29313d;
+        border-radius: 9px;
+        background: #090d13;
+    }
+
+    .empty-icon {
+        width: 42px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 14px;
+        border-radius: 50%;
+        background: #12231c;
+        color: #42d392;
+        font-size: 20px;
+        font-weight: 700;
+    }
+
+    .empty-state h3 {
+        margin: 0;
+        font-size: 16px;
+    }
+
+    .empty-state p {
+        max-width: 520px;
+        margin: 8px auto 0;
+        color: #737e8d;
+        font-size: 13px;
+        line-height: 1.6;
+    }
+
+    .incident-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .incident-card {
+        display: flex;
+        align-items: stretch;
+        gap: 18px;
+        padding: 18px;
+        border-radius: 9px;
+        background: #0f141c;
+        border: 1px solid #252d38;
+    }
+
+    .incident-card.critical {
+        border-left: 3px solid #ff5c69;
+    }
+
+    .incident-card.warning {
+        border-left: 3px solid #ffb454;
+    }
+
+    .incident-indicator {
+        width: 7px;
+        min-width: 7px;
+        border-radius: 50%;
+        margin-top: 5px;
+        height: 7px;
+    }
+
+    .critical .incident-indicator {
+        background: #ff5c69;
+        box-shadow: 0 0 10px #ff5c69;
+    }
+
+    .warning .incident-indicator {
+        background: #ffb454;
+        box-shadow: 0 0 10px #ffb454;
+    }
+
+    .incident-main {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .incident-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 7px;
+    }
+
+    .severity {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+    }
+
+    .critical .severity {
+        color: #ff5c69;
+    }
+
+    .warning .severity {
+        color: #ffb454;
+    }
+
+    .incident-time {
+        color: #697585;
+        font-size: 11px;
+    }
+
+    .incident-main h3 {
+        margin: 0 0 13px;
+        font-size: 15px;
+    }
+
+    .incident-device,
+    .incident-metric {
+        display: inline-flex;
+        gap: 7px;
+        margin-right: 22px;
+        font-size: 11px;
+    }
+
+    .incident-device span,
+    .incident-metric span {
+        color: #606b7a;
+        font-weight: 700;
+    }
+
+    .incident-device strong,
+    .incident-metric strong {
+        color: #aeb7c4;
+    }
+
+    .incident-values {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding-left: 20px;
+        border-left: 1px solid #252d38;
+    }
+
+    .value-block {
+        min-width: 85px;
+    }
+
+    .value-block span {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #606b7a;
+    }
+
+    .value-block strong {
+        font-size: 13px;
+        color: #9da8b7;
+    }
+
+    .value-block.current strong {
+        color: #f4f7fb;
+    }
+
+    .value-arrow {
+        color: #4e5968;
+        font-size: 18px;
+    }
+
+    .radar-info {
+        display: flex;
+        gap: 14px;
+        margin-top: 20px;
+        padding: 18px;
+        border: 1px solid #202733;
+        border-radius: 10px;
+        background: #0d1118;
+    }
+
+    .info-icon {
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #394351;
+        border-radius: 50%;
+        color: #9ca7b5;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .radar-info h3 {
+        margin: 0 0 5px;
+        font-size: 13px;
+    }
+
+    .radar-info p {
+        margin: 0;
+        color: #737e8d;
+        font-size: 12px;
+        line-height: 1.6;
+    }
+</style>
+
+@code {
+
+    private readonly List<TelemetryIncident> incidents = new();
+
+    private string connectionText = "CONNECTING...";
+
+    private int CriticalCount =>
+        incidents.Count(x =>
+            x.Severity.Equals(
+                "Critical",
+                StringComparison.OrdinalIgnoreCase));
+
+    private int WarningCount =>
+        incidents.Count(x =>
+            x.Severity.Equals(
+                "Warning",
+                StringComparison.OrdinalIgnoreCase));
+
+    private int DeviceCount =>
+        incidents
+            .Select(x => x.DeviceId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    protected override async Task OnInitializedAsync()
+    {
+        HubService.IncidentReceived += HandleIncident;
+
+        try
+        {
+            await HubService.StartAsync();
+
+            connectionText = HubService.IsConnected
+                ? "SYSTEM ONLINE"
+                : "DISCONNECTED";
+        }
+        catch
+        {
+            connectionText = "CONNECTION ERROR";
+        }
+    }
+
+    private void HandleIncident(TelemetryIncident incident)
+    {
+        incidents.Insert(0, incident);
+
+        if (incidents.Count > 50)
+        {
+            incidents.RemoveAt(incidents.Count - 1);
+        }
+
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearIncidents()
+    {
+        incidents.Clear();
+    }
+
+    public void Dispose()
+    {
+        HubService.IncidentReceived -= HandleIncident;
+    }
+}

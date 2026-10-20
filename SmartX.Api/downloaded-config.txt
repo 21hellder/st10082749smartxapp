@@ -1,0 +1,1 @@
+Smart-X sensor configuration and diagnostic test file.

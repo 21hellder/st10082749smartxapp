@@ -1,0 +1,356 @@
+﻿@page "/"
+
+<PageTitle>Smart-X</PageTitle>
+
+<div class="home-page">
+
+    <section class="hero-section">
+        <div class="hero-badge">
+            SMART-X · IoT MANAGEMENT PLATFORM
+        </div>
+
+        <h1>Smart-X</h1>
+
+        <p class="hero-subtitle">
+            Data Ingestion and Validation Gateway
+        </p>
+
+        <p class="hero-description">
+            Monitor, validate and investigate telemetry from distributed
+            IoT devices across smart environments.
+        </p>
+    </section>
+
+    <section class="architecture-section">
+
+        <div class="section-heading">
+            <span class="section-label">PLATFORM MODULES</span>
+
+            <h2>Choose an architectural pillar</h2>
+
+            <p>
+                Part 1 focuses on sensor data ingestion, telemetry monitoring
+                and validation.
+            </p>
+        </div>
+
+        <div class="pillar-grid">
+
+            <a class="pillar-card active-card" href="/dashboard">
+
+                <div class="pillar-top">
+                    <span class="status active">ACTIVE · PART 1</span>
+                    <span class="arrow">→</span>
+                </div>
+
+                <div class="pillar-icon">01</div>
+
+                <h3>Sensor Data Ingestion and Telemetry</h3>
+
+                <p>
+                    Receive, validate and monitor simulated IoT telemetry,
+                    register sensors and identify abnormal readings.
+                </p>
+
+                <div class="pillar-features">
+                    <span>Telemetry</span>
+                    <span>Validation</span>
+                    <span>Incident Radar</span>
+                </div>
+
+            </a>
+
+            <a class="pillar-card active-card" href="/command-stream">
+
+                <div class="pillar-top">
+                    <span class="status active">ACTIVE · PART 2</span>
+                    <span class="arrow">→</span>
+                </div>
+
+                <div class="pillar-icon">02</div>
+
+                <h3>Real-Time Command Stream and History</h3>
+
+                <p>
+                    Issue Pump and Relay overrides, browse live telemetry,
+                    review command history and undo the latest command.
+                </p>
+
+                <div class="pillar-features">
+                    <span>Commands</span>
+                    <span>History</span>
+                    <span>Part 2</span>
+                </div>
+
+            </a>
+
+            <div class="pillar-card disabled-card">
+
+                <div class="pillar-top">
+                    <span class="status disabled">DISABLED · FINAL PoE</span>
+                    <span class="lock">LOCKED</span>
+                </div>
+
+                <div class="pillar-icon">03</div>
+
+                <h3>Network Topology and Mesh Routing</h3>
+
+                <p>
+                    Network topology and mesh routing functionality will
+                    be completed as part of the final PoE.
+                </p>
+
+                <div class="pillar-features">
+                    <span>Topology</span>
+                    <span>Mesh Routing</span>
+                    <span>Final PoE</span>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <section class="part-status">
+
+        <div class="status-heading">
+            <span class="status-dot"></span>
+            <strong>PART 1 &amp; PART 2 SYSTEM STATUS</strong>
+        </div>
+
+        <p>
+            Sensor ingestion and telemetry monitoring are available. Real-time
+            command streaming and history are available.
+        </p>
+
+    </section>
+
+</div>
+
+<style>
+
+    .home-page {
+        min-height: 100vh;
+        padding: 70px 7%;
+        background:
+            radial-gradient(
+                circle at 80% 10%,
+                rgba(0, 200, 255, 0.08),
+                transparent 30%
+            ),
+            #070b12;
+        color: #f4f7fb;
+    }
+
+    .hero-section {
+        max-width: 900px;
+        margin: 0 auto 70px;
+        text-align: center;
+    }
+
+    .hero-badge {
+        display: inline-block;
+        padding: 8px 14px;
+        border: 1px solid rgba(0, 210, 255, 0.35);
+        border-radius: 999px;
+        color: #69dfff;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        margin-bottom: 25px;
+    }
+
+    .hero-section h1 {
+        margin: 0;
+        font-size: clamp(3.5rem, 8vw, 6rem);
+        font-weight: 800;
+        letter-spacing: -4px;
+    }
+
+    .hero-subtitle {
+        margin: 10px 0 15px;
+        color: #69dfff;
+        font-size: 1.35rem;
+        font-weight: 600;
+    }
+
+    .hero-description {
+        max-width: 650px;
+        margin: 0 auto;
+        color: #8f9baa;
+        line-height: 1.7;
+        font-size: 1rem;
+    }
+
+    .architecture-section {
+        max-width: 1250px;
+        margin: 0 auto;
+    }
+
+    .section-heading {
+        margin-bottom: 28px;
+    }
+
+    .section-label {
+        color: #69dfff;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+    }
+
+    .section-heading h2 {
+        margin: 8px 0;
+        font-size: 2rem;
+    }
+
+    .section-heading p {
+        color: #7f8a98;
+        margin: 0;
+    }
+
+    .pillar-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+    }
+
+    .pillar-card {
+        min-height: 320px;
+        padding: 28px;
+        border-radius: 18px;
+        border: 1px solid #1c2633;
+        background: #0d131c;
+        color: inherit;
+        text-decoration: none;
+        transition:
+            transform 0.2s ease,
+            border-color 0.2s ease;
+        box-sizing: border-box;
+    }
+
+    .active-card {
+        border-color: rgba(0, 210, 255, 0.4);
+    }
+
+    .active-card:hover {
+        transform: translateY(-5px);
+        border-color: #69dfff;
+    }
+
+    .disabled-card {
+        opacity: 0.52;
+    }
+
+    .pillar-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 30px;
+    }
+
+    .status {
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+    }
+
+    .status.active {
+        color: #5ee6a8;
+    }
+
+    .status.disabled {
+        color: #7f8a98;
+    }
+
+    .arrow {
+        color: #69dfff;
+        font-size: 1.4rem;
+    }
+
+    .lock {
+        color: #657180;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+    }
+
+    .pillar-icon {
+        color: #69dfff;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 2px;
+        margin-bottom: 15px;
+    }
+
+    .pillar-card h3 {
+        margin: 0 0 14px;
+        font-size: 1.3rem;
+        line-height: 1.35;
+    }
+
+    .pillar-card p {
+        color: #8994a2;
+        line-height: 1.65;
+        min-height: 80px;
+        margin-bottom: 22px;
+    }
+
+    .pillar-features {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .pillar-features span {
+        padding: 6px 9px;
+        border-radius: 6px;
+        background: #151d28;
+        color: #778392;
+        font-size: 0.7rem;
+    }
+
+    .part-status {
+        max-width: 1250px;
+        margin: 30px auto 0;
+        padding: 18px 22px;
+        border: 1px solid #1c2633;
+        border-radius: 12px;
+        background: #0b1119;
+        box-sizing: border-box;
+    }
+
+    .status-heading {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 0.75rem;
+        letter-spacing: 1px;
+    }
+
+    .part-status p {
+        margin: 8px 0 0 17px;
+        color: #7f8a98;
+        font-size: 0.85rem;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #5ee6a8;
+        box-shadow: 0 0 10px rgba(94, 230, 168, 0.7);
+    }
+
+    @@media (max-width: 900px) {
+
+        .pillar-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .home-page {
+            padding: 50px 5%;
+        }
+
+    }
+
+</style>

@@ -1,0 +1,865 @@
+﻿@page "/attachments"
+
+@using System.Net.Http.Headers
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using SmartX.Client.Models
+
+@inject HttpClient Http
+
+<div class="attachments-page">
+
+    <div class="page-header">
+        <div>
+            <div class="eyebrow">SMART-X / SENSOR MANAGEMENT</div>
+            <h1>Sensor Attachments</h1>
+            <p>Upload configuration files, deployment photos and hardware logs to a registered sensor.</p>
+        </div>
+
+        <div class="header-status">
+            <span class="status-dot"></span>
+            API CONNECTED
+        </div>
+    </div>
+
+    <div class="content-grid">
+
+        <section class="panel upload-panel">
+
+            <div class="panel-header">
+                <div>
+                    <h2>Upload Attachment</h2>
+                    <p>Attach a file to a registered sensor.</p>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Select Sensor</label>
+
+                <select class="form-control"
+                        @bind="selectedDeviceId"
+                        @bind:after="SensorChanged">
+
+                    <option value="">-- Select a sensor --</option>
+
+                    @foreach (var sensor in sensors)
+                    {
+                        <option value="@sensor.DeviceId">
+                            @sensor.DeviceId — @sensor.Location
+                        </option>
+                    }
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Choose File</label>
+
+                <InputFile OnChange="HandleFileSelected"
+                           class="file-input" />
+
+                @if (selectedFile != null)
+                {
+                    <div class="selected-file">
+                        <div>
+                            <strong>@selectedFile.Name</strong>
+                            <span>@FormatFileSize(selectedFile.Size)</span>
+                        </div>
+
+                        <button type="button"
+                                class="remove-button"
+                                @onclick="ClearSelectedFile">
+                            Remove
+                        </button>
+                    </div>
+                }
+            </div>
+
+            <div class="upload-info">
+                <div>
+                    <strong>Maximum file size</strong>
+                    <span>10 MB</span>
+                </div>
+
+                <div>
+                    <strong>Supported formats</strong>
+                    <span>JSON, TXT, LOG, CSV, XML, JPG, JPEG, PNG, PDF</span>
+                </div>
+            </div>
+
+            <button class="upload-button"
+                    @onclick="UploadFile"
+                    disabled="@(!CanUpload || uploading)">
+
+                @if (uploading)
+                {
+                    <span>Uploading...</span>
+                }
+                else
+                {
+                    <span>Upload File</span>
+                }
+            </button>
+
+            @if (!string.IsNullOrWhiteSpace(message))
+            {
+                <div class="message @messageType">
+                    @message
+                </div>
+            }
+
+        </section>
+
+
+        <section class="panel attachments-panel">
+
+            <div class="panel-header">
+                <div>
+                    <h2>Sensor Files</h2>
+
+                    @if (!string.IsNullOrWhiteSpace(selectedDeviceId))
+                    {
+                        <p>Files attached to <strong>@selectedDeviceId</strong>.</p>
+                    }
+                    else
+                    {
+                        <p>Select a sensor to view its attachments.</p>
+                    }
+                </div>
+
+                <button class="refresh-button"
+                        @onclick="LoadAttachments"
+                        disabled="@string.IsNullOrWhiteSpace(selectedDeviceId)">
+                    Refresh
+                </button>
+            </div>
+
+            @if (loadingAttachments)
+            {
+                <div class="empty-state">
+                    <div class="loader"></div>
+                    <p>Loading attachments...</p>
+                </div>
+            }
+            else if (string.IsNullOrWhiteSpace(selectedDeviceId))
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">📁</div>
+                    <h3>No sensor selected</h3>
+                    <p>Select a registered sensor to view its files.</p>
+                </div>
+            }
+            else if (attachments.Count == 0)
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">📄</div>
+                    <h3>No attachments</h3>
+                    <p>This sensor does not have any uploaded files yet.</p>
+                </div>
+            }
+            else
+            {
+                <div class="attachment-list">
+
+                    @foreach (var attachment in attachments)
+                    {
+                        <div class="attachment-card">
+
+                            <div class="file-icon">
+                                @GetFileIcon(attachment.FileName)
+                            </div>
+
+                            <div class="file-details">
+                                <strong>@attachment.FileName</strong>
+
+                                <span>
+                                    @FormatFileSize(attachment.FileSize)
+                                    ·
+                                    @attachment.ContentType
+                                </span>
+
+                                <small>
+                                    Uploaded @attachment.UploadedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                                </small>
+                            </div>
+
+                            <a class="download-button"
+                               href="@GetDownloadUrl(attachment.Id)"
+                               target="_blank">
+                                Download
+                            </a>
+
+                        </div>
+                    }
+
+                </div>
+            }
+
+        </section>
+
+    </div>
+
+</div>
+
+
+<style>
+
+    .attachments-page {
+        min-height: 100vh;
+        padding: 32px;
+        background: radial-gradient(circle at top right, rgba(0, 200, 255, 0.08), transparent 30%), #071018;
+        color: #e8f1f5;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 30px;
+    }
+
+    .eyebrow {
+        color: #35d0ff;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        margin-bottom: 8px;
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 34px;
+        font-weight: 700;
+    }
+
+    .page-header p {
+        margin-top: 8px;
+        color: #8fa5b0;
+    }
+
+    .header-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border: 1px solid rgba(80, 220, 170, 0.25);
+        border-radius: 8px;
+        color: #73e5b7;
+        background: rgba(80, 220, 170, 0.06);
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #43e0a2;
+        box-shadow: 0 0 10px rgba(67, 224, 162, 0.8);
+    }
+
+    .content-grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.9fr) minmax(400px, 1.4fr);
+        gap: 24px;
+    }
+
+    .panel {
+        background: rgba(13, 25, 35, 0.92);
+        border: 1px solid #203441;
+        border-radius: 14px;
+        padding: 24px;
+        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.2);
+    }
+
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 15px;
+        margin-bottom: 24px;
+    }
+
+        .panel-header h2 {
+            margin: 0;
+            font-size: 20px;
+        }
+
+        .panel-header p {
+            margin: 6px 0 0;
+            color: #8097a4;
+            font-size: 13px;
+        }
+
+    .form-group {
+        margin-bottom: 22px;
+    }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #a9bdc7;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+    .form-control {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid #2a424f;
+        border-radius: 8px;
+        background: #09151e;
+        color: #e7f0f4;
+        outline: none;
+    }
+
+        .form-control:focus {
+            border-color: #35d0ff;
+            box-shadow: 0 0 0 3px rgba(53, 208, 255, 0.08);
+        }
+
+    .file-input {
+        width: 100%;
+        padding: 12px;
+        border: 1px dashed #2d4a59;
+        border-radius: 8px;
+        background: #09151e;
+        color: #a9bdc7;
+    }
+
+    .selected-file {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 10px;
+        padding: 12px;
+        background: #0a1922;
+        border: 1px solid #243e4d;
+        border-radius: 8px;
+    }
+
+        .selected-file div {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .selected-file span {
+            color: #8097a4;
+            font-size: 12px;
+        }
+
+    .remove-button {
+        border: none;
+        background: transparent;
+        color: #ff7181;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .upload-info {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        background: #091720;
+        border: 1px solid #1d3441;
+    }
+
+        .upload-info div {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .upload-info strong {
+            color: #b9cbd3;
+            font-size: 12px;
+        }
+
+        .upload-info span {
+            color: #718995;
+            font-size: 12px;
+        }
+
+    .upload-button {
+        width: 100%;
+        padding: 13px;
+        border: none;
+        border-radius: 8px;
+        background: #1597c2;
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+
+        .upload-button:hover:not(:disabled) {
+            background: #1ab0df;
+            transform: translateY(-1px);
+        }
+
+        .upload-button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+    .message {
+        margin-top: 15px;
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 13px;
+    }
+
+        .message.success {
+            background: rgba(55, 210, 150, 0.08);
+            border: 1px solid rgba(55, 210, 150, 0.25);
+            color: #69dfac;
+        }
+
+        .message.error {
+            background: rgba(255, 85, 105, 0.08);
+            border: 1px solid rgba(255, 85, 105, 0.25);
+            color: #ff8493;
+        }
+
+    .refresh-button {
+        padding: 8px 13px;
+        border: 1px solid #294452;
+        border-radius: 7px;
+        background: #0b1821;
+        color: #9eb3bd;
+        cursor: pointer;
+    }
+
+        .refresh-button:hover:not(:disabled) {
+            border-color: #35d0ff;
+            color: #35d0ff;
+        }
+
+        .refresh-button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+    .attachment-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .attachment-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px;
+        background: #091720;
+        border: 1px solid #203946;
+        border-radius: 9px;
+    }
+
+    .file-icon {
+        width: 42px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: #102631;
+        font-size: 20px;
+    }
+
+    .file-details {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+        .file-details strong {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-details span {
+            color: #8299a4;
+            font-size: 12px;
+        }
+
+        .file-details small {
+            color: #607984;
+            font-size: 11px;
+        }
+
+    .download-button {
+        padding: 8px 12px;
+        border: 1px solid #285163;
+        border-radius: 7px;
+        color: #42c9f2;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+        .download-button:hover {
+            background: rgba(53, 208, 255, 0.08);
+            border-color: #35d0ff;
+        }
+
+    .empty-state {
+        min-height: 220px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        color: #6e8793;
+    }
+
+        .empty-state h3 {
+            margin: 10px 0 4px;
+            color: #a8bbc4;
+            font-size: 16px;
+        }
+
+        .empty-state p {
+            margin: 0;
+            font-size: 13px;
+        }
+
+    .empty-icon {
+        font-size: 34px;
+        opacity: 0.65;
+    }
+
+    .loader {
+        width: 26px;
+        height: 26px;
+        border: 3px solid #203b48;
+        border-top-color: #35d0ff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 12px;
+    }
+
+    @@keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    @@media (max-width: 900px) {
+        .attachments-page {
+            padding: 20px;
+        }
+
+        .content-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .page-header {
+            flex-direction: column;
+            gap: 15px;
+        }
+    }
+</style>
+
+
+@code {
+
+    private List<Sensor> sensors = new();
+
+    private List<SensorAttachment> attachments = new();
+
+    private string selectedDeviceId = string.Empty;
+
+    private IBrowserFile? selectedFile;
+
+    private bool uploading;
+
+    private bool loadingAttachments;
+
+    private string message = string.Empty;
+
+    private string messageType = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSensors();
+    }
+
+    private async Task LoadSensors()
+    {
+        try
+        {
+            var result =
+                await Http.GetFromJsonAsync<SensorResponse>(
+                    "http://localhost:5187/api/sensors");
+
+            sensors = result?.Sensors ?? new List<Sensor>();
+
+            if (!string.IsNullOrWhiteSpace(selectedDeviceId))
+            {
+                await LoadAttachments();
+            }
+        }
+        catch (Exception ex)
+        {
+            sensors = new List<Sensor>();
+
+            ShowMessage(
+                $"Could not load sensors: {ex.Message}",
+                "error");
+        }
+    }
+
+    private async Task SensorChanged()
+    {
+        message = string.Empty;
+        messageType = string.Empty;
+
+        attachments = new List<SensorAttachment>();
+
+        if (!string.IsNullOrWhiteSpace(selectedDeviceId))
+        {
+            await LoadAttachments();
+        }
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        message = string.Empty;
+        messageType = string.Empty;
+
+        selectedFile = e.File;
+
+        if (selectedFile != null &&
+            selectedFile.Size > 10 * 1024 * 1024)
+        {
+            selectedFile = null;
+
+            ShowMessage(
+                "File is too large. Maximum size is 10 MB.",
+                "error");
+        }
+    }
+
+    private void ClearSelectedFile()
+    {
+        selectedFile = null;
+
+        message = string.Empty;
+        messageType = string.Empty;
+    }
+
+    private bool CanUpload =>
+        !uploading &&
+        selectedFile != null &&
+        !string.IsNullOrWhiteSpace(selectedDeviceId);
+
+    private async Task UploadFile()
+    {
+        if (!CanUpload || selectedFile == null)
+        {
+            return;
+        }
+
+        uploading = true;
+        message = string.Empty;
+        messageType = string.Empty;
+
+        try
+        {
+            const long maxFileSize = 10 * 1024 * 1024;
+
+            if (selectedFile.Size > maxFileSize)
+            {
+                ShowMessage(
+                    "File is too large. Maximum size is 10 MB.",
+                    "error");
+
+                return;
+            }
+
+            using var content = new MultipartFormDataContent();
+
+            await using var fileStream =
+                selectedFile.OpenReadStream(
+                    maxAllowedSize: maxFileSize);
+
+            using var streamContent =
+                new StreamContent(fileStream);
+
+            streamContent.Headers.ContentType =
+                new MediaTypeHeaderValue(
+                    string.IsNullOrWhiteSpace(selectedFile.ContentType)
+                        ? "application/octet-stream"
+                        : selectedFile.ContentType);
+
+            content.Add(
+                streamContent,
+                "file",
+                selectedFile.Name);
+
+            var response =
+                await Http.PostAsync(
+                    $"http://localhost:5187/api/sensors/{Uri.EscapeDataString(selectedDeviceId)}/attachments",
+                    content);
+
+            var responseText =
+                await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                ShowMessage(
+                    "File uploaded successfully.",
+                    "success");
+
+                selectedFile = null;
+
+                await LoadAttachments();
+            }
+            else
+            {
+                ShowMessage(
+                    $"Upload failed: {responseText}",
+                    "error");
+            }
+        }
+        catch (IOException ex)
+        {
+            ShowMessage(
+                $"File could not be read: {ex.Message}",
+                "error");
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(
+                $"Upload failed: {ex.Message}",
+                "error");
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    private async Task LoadAttachments()
+    {
+        if (string.IsNullOrWhiteSpace(selectedDeviceId))
+        {
+            attachments = new List<SensorAttachment>();
+            return;
+        }
+
+        loadingAttachments = true;
+
+        try
+        {
+            var result =
+                await Http.GetFromJsonAsync<AttachmentResponse>(
+                    $"http://localhost:5187/api/sensors/{Uri.EscapeDataString(selectedDeviceId)}/attachments");
+
+            attachments =
+                result?.Attachments ??
+                new List<SensorAttachment>();
+        }
+        catch (Exception ex)
+        {
+            attachments = new List<SensorAttachment>();
+
+            ShowMessage(
+                $"Could not load attachments: {ex.Message}",
+                "error");
+        }
+        finally
+        {
+            loadingAttachments = false;
+        }
+    }
+
+    private string GetDownloadUrl(string attachmentId)
+    {
+        return
+            $"http://localhost:5187/api/sensors/attachments/{Uri.EscapeDataString(attachmentId)}/download";
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024)
+        {
+            return $"{bytes} B";
+        }
+
+        if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024.0:F1} KB";
+        }
+
+        return $"{bytes / (1024.0 * 1024.0):F2} MB";
+    }
+
+    private static string GetFileIcon(string fileName)
+    {
+        string extension =
+            Path.GetExtension(fileName)
+                .ToLowerInvariant();
+
+        return extension switch
+        {
+            ".pdf" => "📕",
+            ".json" => "📋",
+            ".txt" => "📄",
+            ".log" => "📝",
+            ".csv" => "📊",
+            ".xml" => "🗂️",
+            ".jpg" => "🖼️",
+            ".jpeg" => "🖼️",
+            ".png" => "🖼️",
+            _ => "📎"
+        };
+    }
+
+    private void ShowMessage(
+        string text,
+        string type)
+    {
+        message = text;
+        messageType = type;
+    }
+
+    private class SensorResponse
+    {
+        public bool Success { get; set; }
+
+        public List<Sensor> Sensors { get; set; } = new();
+    }
+
+    private class AttachmentResponse
+    {
+        public bool Success { get; set; }
+
+        public int Count { get; set; }
+
+        public List<SensorAttachment> Attachments { get; set; } = new();
+    }
+
+    private class SensorAttachment
+    {
+        public string Id { get; set; } = string.Empty;
+
+        public string SensorId { get; set; } = string.Empty;
+
+        public string FileName { get; set; } = string.Empty;
+
+        public string ContentType { get; set; } = string.Empty;
+
+        public long FileSize { get; set; }
+
+        public DateTime UploadedAt { get; set; }
+    }
+}
