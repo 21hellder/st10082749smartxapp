@@ -1,0 +1,999 @@
+﻿@page "/network-topology"
+@using System.Net.Http.Json
+@using System.Text.Json
+@using SmartX.Client.Models
+@using SmartX.Client.Services
+@inject HttpClient Http
+
+<PageTitle>Smart-X Network Topology</PageTitle>
+
+<div class="topology-page">
+
+    <header class="page-header">
+        <div>
+            <span class="eyebrow">SMART-X / PART 3</span>
+            <h1>Network Topology</h1>
+            <p>Mesh network graph, traversal algorithms, minimum spanning tree, and AVL-backed telemetry range queries.</p>
+        </div>
+        <div class="stats">
+            <span class="stat"><strong>@(graph?.NodeCount ?? 0)</strong> NODES</span>
+            <span class="stat"><strong>@(graph?.EdgeCount ?? 0)</strong> EDGES</span>
+            <span class="stat @(unreachable.Count > 0 ? "warn" : "")">
+                <strong>@unreachable.Count</strong> UNREACHABLE
+            </span>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="status-message @(statusIsError ? "error" : "success")">
+            @statusMessage
+        </div>
+    }
+
+    <div class="topo-grid">
+
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!-- GRAPH VISUALISATION                                      -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <section class="panel graph-panel">
+            <div class="panel-heading">
+                <div>
+                    <span class="eyebrow">MESH GRAPH</span>
+                    <h2>IoT Network Topology</h2>
+                </div>
+                <button class="small-button" @onclick="LoadTopologyAsync" disabled="@isLoading">
+                    @(isLoading ? "Loading..." : "Reload")
+                </button>
+            </div>
+
+            @if (graph is null || graph.Nodes.Count == 0)
+            {
+                <div class="empty-state">
+                    <strong>No topology loaded</strong>
+                    <span>Click Reload or check the API.</span>
+                </div>
+            }
+            else
+            {
+                <div class="graph-wrap">
+                    <svg viewBox="0 0 800 600" class="graph-svg">
+                        <!-- Edges -->
+                        @foreach (var edge in graph.Edges)
+                        {
+                            var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == edge.FromId);
+                            var toNode = graph.Nodes.FirstOrDefault(n => n.Id == edge.ToId);
+                            if (fromNode is null || toNode is null) { continue; }
+
+                            var isMstEdge = mstEdges.Contains((edge.FromId, edge.ToId))
+                                         || mstEdges.Contains((edge.ToId, edge.FromId));
+                            var isPathEdge = pathEdges.Contains((edge.FromId, edge.ToId))
+                                          || pathEdges.Contains((edge.ToId, edge.FromId));
+
+                            var stroke = isPathEdge ? "#ffb700"
+                                       : isMstEdge ? "#20d6b1"
+                                       : "#2a3b45";
+                            var width = isPathEdge ? 4 : isMstEdge ? 3 : 1.5;
+
+                            <line x1="@(fromNode.X * 800)"
+                                  y1="@(fromNode.Y * 600)"
+                                  x2="@(toNode.X * 800)"
+                                  y2="@(toNode.Y * 600)"
+                                  stroke="@stroke"
+                                  stroke-width="@width"
+                                  stroke-dasharray="@(isMstEdge && !isPathEdge ? "0" : "0")"
+                                  opacity="0.85" />
+                        }
+
+                        <!-- Nodes -->
+                        @foreach (var node in graph.Nodes)
+                        {
+                            var isGateway = node.IsGateway;
+                            var isUnreachable = unreachable.Contains(node.Id);
+                            var isOnPath = pathNodes.Contains(node.Id);
+                            var isSelected = node.Id == selectedNodeId;
+
+                            var fill = isUnreachable ? "#3a1519"
+                                     : isGateway ? "#102b28"
+                                     : "#0d151b";
+                            var stroke = isUnreachable ? "#e85d75"
+                                       : isGateway ? "#20d6b1"
+                                       : isOnPath ? "#ffb700"
+                                       : isSelected ? "#69dfff"
+                                       : "#2a3b45";
+                            var strokeWidth = isSelected || isOnPath || isGateway ? 3 : 1.5;
+                            var radius = isGateway ? 26 : 20;
+
+                            <g @onclick="() => SelectNode(node.Id)" style="cursor:pointer">
+                                <circle cx="@(node.X * 800)"
+                                        cy="@(node.Y * 600)"
+                                        r="@radius"
+                                        fill="@fill"
+                                        stroke="@stroke"
+                                        stroke-width="@strokeWidth" />
+                                <text x="@(node.X * 800)"
+                                      y="@(node.Y * 600 + 4)"
+                                      text-anchor="middle"
+                                      fill="#e9f1f5"
+                                      font-size="@(isGateway ? "11" : "9")"
+                                      font-weight="700">
+                                    @(node.IsGateway ? "GW" : node.Id.Replace("ESP32-", "E"))
+                                </text>
+                                <text x="@(node.X * 800)"
+                                      y="@(node.Y * 600 + radius + 14)"
+                                      text-anchor="middle"
+                                      fill="#758691"
+                                      font-size="9">
+                                    @node.Id
+                                </text>
+                            </g>
+                        }
+                    </svg>
+
+                    <div class="legend">
+                        <span><span class="swatch" style="background:#20d6b1"></span>MST edge</span>
+                        <span><span class="swatch" style="background:#ffb700"></span>Path</span>
+                        <span><span class="swatch" style="background:#e85d75"></span>Unreachable</span>
+                        <span><span class="swatch" style="background:#2a3b45"></span>Normal edge</span>
+                    </div>
+                </div>
+            }
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!-- CONTROLS                                                 -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <div class="controls-column">
+
+            <!-- BFS / DFS -->
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <span class="eyebrow">TRAVERSAL</span>
+                        <h2>BFS / DFS</h2>
+                    </div>
+                </div>
+                <div class="control-body">
+                    <label>
+                        Start node
+                        <select @bind="selectedStartNode">
+                            @foreach (var node in graph?.Nodes ?? new List<TopologyNodeDto>())
+                            {
+                                <option value="@node.Id">@node.Id</option>
+                            }
+                        </select>
+                    </label>
+                    <div class="button-row">
+                        <button class="primary-button" @onclick="RunBfsAsync" disabled="@isLoading">Run BFS</button>
+                        <button class="primary-button" @onclick="RunDfsAsync" disabled="@isLoading">Run DFS</button>
+                    </div>
+
+                    @if (lastTraversal is not null)
+                    {
+                        <div class="result-box">
+                            <div class="result-title">@lastTraversal.Algorithm from @lastTraversal.StartNode</div>
+                            <div class="result-row">
+                                <span class="result-label">Visit order:</span>
+                                <span class="result-value">@string.Join(" → ", lastTraversal.VisitOrder)</span>
+                            </div>
+                            @if (lastTraversal.Unreachable.Count > 0)
+                            {
+                                <div class="result-row">
+                                    <span class="result-label">Unreachable:</span>
+                                    <span class="result-value danger">@string.Join(", ", lastTraversal.Unreachable)</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <!-- MST -->
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <span class="eyebrow">MINIMUM SPANNING TREE</span>
+                        <h2>Most Power-Efficient Routing</h2>
+                    </div>
+                </div>
+                <div class="control-body">
+                    <div class="button-row">
+                        <button class="primary-button" @onclick="RunPrimAsync" disabled="@isLoading">Prim's</button>
+                        <button class="primary-button" @onclick="RunKruskalAsync" disabled="@isLoading">Kruskal's</button>
+                    </div>
+
+                    @if (lastMst is not null)
+                    {
+                        <div class="result-box">
+                            <div class="result-title">@lastMst.Algorithm MST</div>
+                            <div class="result-row">
+                                <span class="result-label">Total weight:</span>
+                                <span class="result-value accent">@lastMst.TotalWeight.ToString("0.##")</span>
+                            </div>
+                            <div class="result-row">
+                                <span class="result-label">Edges:</span>
+                                <span class="result-value">@lastMst.EdgeCount (@lastMst.NodeCount nodes)</span>
+                            </div>
+                            <div class="mst-edges">
+                                @foreach (var e in lastMst.Edges)
+                                {
+                                    <span class="mst-edge">@e.FromId ↔ @e.ToId <em>@e.Weight.ToString("0.##")</em></span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <!-- Path Finder -->
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <span class="eyebrow">ROUTING PATH</span>
+                        <h2>Shortest Hop Path</h2>
+                    </div>
+                </div>
+                <div class="control-body">
+                    <label>
+                        From
+                        <select @bind="pathFrom">
+                            @foreach (var node in graph?.Nodes ?? new List<TopologyNodeDto>())
+                            {
+                                <option value="@node.Id">@node.Id</option>
+                            }
+                        </select>
+                    </label>
+                    <label>
+                        To
+                        <select @bind="pathTo">
+                            @foreach (var node in graph?.Nodes ?? new List<TopologyNodeDto>())
+                            {
+                                <option value="@node.Id">@node.Id</option>
+                            }
+                        </select>
+                    </label>
+                    <button class="primary-button" @onclick="RunPathAsync" disabled="@isLoading">Find Path</button>
+
+                    @if (lastPath is not null)
+                    {
+                        <div class="result-box">
+                            @if (lastPath.Found)
+                            {
+                                <div class="result-title">Path (@lastPath.HopCount hops)</div>
+                                <div class="result-value accent">@string.Join(" → ", lastPath.Path)</div>
+                            }
+                            else
+                            {
+                                <div class="result-title danger">No path exists</div>
+                                <div class="result-value">@lastPath.FromId cannot reach @lastPath.ToId</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- HISTORICAL TELEMETRY (AVL RANGE QUERY)                     -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <section class="panel">
+        <div class="panel-heading">
+            <div>
+                <span class="eyebrow">AVL TREE RANGE QUERY</span>
+                <h2>Historical Telemetry Log</h2>
+            </div>
+            @if (lastRange is not null)
+            {
+                <span class="stat">
+                    Tree height: <strong>@lastRange.TreeHeight</strong>
+                    · Total values: <strong>@lastRange.TreeValueCount</strong>
+                    · Returned: <strong>@lastRange.Count</strong>
+                </span>
+            }
+        </div>
+
+        <div class="range-controls">
+            <label>
+                Device
+                <select @bind="rangeDeviceId">
+                    @foreach (var node in graph?.Nodes.Where(n => !n.IsGateway) ?? new List<TopologyNodeDto>())
+                    {
+                        <option value="@node.Id">@node.Id</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Metric
+                <select @bind="rangeMetric">
+                    <option value="">All metrics</option>
+                    <option value="Temperature">Temperature</option>
+                    <option value="Moisture">Moisture</option>
+                    <option value="Humidity">Humidity</option>
+                    <option value="Power">Power</option>
+                    <option value="Voltage">Voltage</option>
+                </select>
+            </label>
+            <label>
+                From
+                <input type="datetime-local" @bind="rangeFrom" />
+            </label>
+            <label>
+                To
+                <input type="datetime-local" @bind="rangeTo" />
+            </label>
+            <button class="primary-button" @onclick="RunRangeQueryAsync" disabled="@isLoading">Query</button>
+        </div>
+
+        @if (lastRange is null)
+        {
+            <div class="empty-state">
+                <strong>No range query run yet</strong>
+                <span>Choose a device and time range above, then click Query.</span>
+            </div>
+        }
+        else if (lastRange.Readings.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No readings in that range</strong>
+                <span>Try widening the time window or clearing the metric filter.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Device</th>
+                            <th>Metric</th>
+                            <th>Value</th>
+                            <th>Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var reading in lastRange.Readings)
+                        {
+                            <tr>
+                                <td>@reading.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td class="device-name">@reading.DeviceId</td>
+                                <td>@reading.Metric</td>
+                                <td class="reading-value">@reading.Value</td>
+                                <td>@reading.Unit</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <footer>
+        SMART-X NETWORK TOPOLOGY · AVL TREES · BFS/DFS · PRIM/KRUSKAL · MESH ROUTING
+    </footer>
+
+</div>
+
+<style>
+    .topology-page {
+        min-height: 100vh;
+        padding: 30px;
+        background: #080d12;
+        color: #e9f1f5;
+        font-family: Inter, system-ui, sans-serif;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 22px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #20303a;
+        flex-wrap: wrap;
+    }
+
+    h1 { margin: 6px 0; font-size: 2rem; }
+    h2 { margin: 5px 0 0; font-size: 1rem; }
+    p { color: #84949e; margin: 4px 0 0; max-width: 700px; }
+
+    .eyebrow {
+        color: #20d6b1;
+        font-size: .68rem;
+        font-weight: 800;
+        letter-spacing: 1.6px;
+    }
+
+    .stats { display: flex; gap: 14px; flex-wrap: wrap; }
+    .stat {
+        padding: 8px 12px;
+        background: #0d151b;
+        border: 1px solid #1d2a33;
+        border-radius: 4px;
+        font-size: .68rem;
+        letter-spacing: .8px;
+        color: #758691;
+    }
+    .stat strong { color: #e9f1f5; font-size: 1rem; margin-right: 4px; }
+    .stat.warn strong { color: #e85d75; }
+
+    .status-message {
+        margin-bottom: 16px;
+        padding: 11px 14px;
+        border: 1px solid #28433e;
+        border-radius: 4px;
+        font-size: .78rem;
+        overflow-wrap: anywhere;
+    }
+    .status-message.success { color: #20d6b1; }
+    .status-message.error { color: #ff8194; border-color: #63313c; }
+
+    .topo-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+
+    .controls-column { display: grid; gap: 16px; }
+
+    .panel {
+        background: #0d151b;
+        border: 1px solid #1d2a33;
+        min-width: 0;
+    }
+
+    .panel-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid #1d2a33;
+    }
+
+    .graph-wrap { padding: 10px; }
+    .graph-svg {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 4 / 3;
+        background: radial-gradient(circle at 50% 50%, rgba(32,214,177,.04), transparent 70%);
+        border-radius: 4px;
+    }
+
+    .legend {
+        display: flex;
+        gap: 16px;
+        padding: 10px 12px 4px;
+        font-size: .68rem;
+        color: #84949e;
+        flex-wrap: wrap;
+    }
+    .legend .swatch {
+        display: inline-block;
+        width: 12px;
+        height: 3px;
+        vertical-align: middle;
+        margin-right: 5px;
+    }
+
+    .control-body {
+        padding: 16px 20px;
+        display: grid;
+        gap: 12px;
+    }
+
+    label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: .72rem;
+        color: #9cabb4;
+    }
+
+    input, select {
+        padding: 8px 10px;
+        background: #080f14;
+        color: #e9f1f5;
+        border: 1px solid #2a3b45;
+        border-radius: 4px;
+        font-size: .78rem;
+    }
+
+    .button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .primary-button, .small-button {
+        padding: 9px 14px;
+        background: #20d6b1;
+        color: #07120f;
+        border: 0;
+        border-radius: 4px;
+        font-weight: 750;
+        font-size: .74rem;
+        cursor: pointer;
+    }
+    .primary-button:hover, .small-button:hover { background: #1fc39f; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+
+    .result-box {
+        margin-top: 8px;
+        padding: 12px 14px;
+        background: #080f14;
+        border: 1px solid #1d2a33;
+        border-radius: 4px;
+        font-size: .74rem;
+    }
+
+    .result-title {
+        color: #20d6b1;
+        font-weight: 700;
+        margin-bottom: 8px;
+        font-size: .68rem;
+        letter-spacing: .5px;
+    }
+    .result-title.danger { color: #e85d75; }
+
+    .result-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 5px;
+        color: #b3c0c7;
+        flex-wrap: wrap;
+    }
+
+    .result-label { color: #758691; min-width: 90px; }
+    .result-value { color: #e9f1f5; font-family: ui-monospace, monospace; font-size: .7rem; }
+    .result-value.accent { color: #20d6b1; font-weight: 700; }
+    .result-value.danger { color: #ff8194; }
+
+    .mst-edges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+    }
+
+    .mst-edge {
+        padding: 4px 8px;
+        background: #102b28;
+        border-radius: 3px;
+        color: #20d6b1;
+        font-size: .65rem;
+        font-family: ui-monospace, monospace;
+    }
+    .mst-edge em { color: #758691; font-style: normal; margin-left: 4px; }
+
+    .range-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 16px 20px;
+        align-items: flex-end;
+    }
+    .range-controls label { flex: 1; min-width: 130px; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .74rem; }
+    th, td {
+        padding: 11px 16px;
+        text-align: left;
+        border-bottom: 1px solid #1a272f;
+    }
+    th { color: #687984; font-size: .62rem; letter-spacing: .8px; }
+    td { color: #b3c0c7; }
+    .device-name { color: #20d6b1; font-weight: 700; }
+    .reading-value { color: #e9f1f5; font-weight: 700; }
+
+    .empty-state {
+        display: grid;
+        gap: 6px;
+        padding: 30px 20px;
+        text-align: center;
+        color: #82919b;
+        font-size: .78rem;
+    }
+    .empty-state strong { color: #dbe5e9; }
+
+    footer {
+        padding: 10px 0;
+        color: #52636e;
+        font-size: .62rem;
+        letter-spacing: 1px;
+        text-align: center;
+    }
+
+    @@media (max-width: 1000px) {
+        .topo-grid { grid-template-columns: 1fr; }
+    }
+</style>
+@code {
+    private const string ApiBase = "http://localhost:5187";
+
+    private TopologyGraphDto? graph;
+    private TraversalResultDto? lastTraversal;
+    private MstResultDto? lastMst;
+    private PathResultDto? lastPath;
+    private TelemetryRangeResultDto? lastRange;
+
+    private string statusMessage = string.Empty;
+    private bool statusIsError;
+    private bool isLoading;
+
+    private string selectedNodeId = string.Empty;
+    private string selectedStartNode = "GATEWAY-01";
+    private string pathFrom = "ESP32-001";
+    private string pathTo = "ESP32-005";
+
+    private string rangeDeviceId = "ESP32-001";
+    private string rangeMetric = string.Empty;
+    private DateTime rangeFrom = DateTime.UtcNow.AddHours(-2);
+    private DateTime rangeTo = DateTime.UtcNow.AddHours(1);
+
+    // Highlights computed from the last MST / path / unreachable responses
+    private readonly HashSet<(string, string)> mstEdges = new();
+    private readonly HashSet<(string, string)> pathEdges = new();
+    private readonly HashSet<string> pathNodes = new();
+    private readonly List<string> unreachable = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTopologyAsync();
+        await RefreshUnreachableAsync();
+    }
+
+    private void SetStatus(string message, bool isError)
+    {
+        statusMessage = message;
+        statusIsError = isError;
+    }
+
+    private void SelectNode(string nodeId)
+    {
+        selectedNodeId = nodeId;
+        rangeDeviceId = nodeId;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // GRAPH LOAD
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task LoadTopologyAsync()
+    {
+        isLoading = true;
+        try
+        {
+            using var response = await Http.GetAsync($"{ApiBase}/api/topology");
+            response.EnsureSuccessStatusCode();
+
+            graph = await response.Content.ReadFromJsonAsync<TopologyGraphDto>();
+
+            if (graph is not null && graph.Nodes.Count > 0)
+            {
+                if (string.IsNullOrEmpty(selectedNodeId))
+                    selectedNodeId = graph.Nodes[0].Id;
+
+                // Ensure the dropdown selections exist in the graph
+                if (!graph.Nodes.Any(n => n.Id == selectedStartNode))
+                    selectedStartNode = graph.Nodes[0].Id;
+                if (!graph.Nodes.Any(n => n.Id == pathFrom))
+                    pathFrom = graph.Nodes[0].Id;
+                if (!graph.Nodes.Any(n => n.Id == pathTo))
+                    pathTo = graph.Nodes[graph.Nodes.Count - 1].Id;
+            }
+
+            SetStatus($"Loaded {graph?.NodeCount ?? 0} nodes and {graph?.EdgeCount ?? 0} edges.", false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Failed to load topology: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RefreshUnreachableAsync()
+    {
+        try
+        {
+            using var response = await Http.GetAsync(
+                $"{ApiBase}/api/topology/unreachable?start=GATEWAY-01");
+            if (!response.IsSuccessStatusCode) return;
+
+            using var doc = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync());
+
+            unreachable.Clear();
+            if (doc.RootElement.TryGetProperty("unreachableNodes", out var arr) &&
+                arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                    unreachable.Add(item.GetString() ?? string.Empty);
+            }
+        }
+        catch
+        {
+            // Non-critical: unreachable highlighting is optional
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // BFS / DFS
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task RunBfsAsync()
+    {
+        await RunTraversalAsync("bfs");
+    }
+
+    private async Task RunDfsAsync()
+    {
+        await RunTraversalAsync("dfs");
+    }
+
+    private async Task RunTraversalAsync(string algorithm)
+    {
+        isLoading = true;
+        try
+        {
+            var url = $"{ApiBase}/api/topology/traverse/{algorithm}?start={Uri.EscapeDataString(selectedStartNode)}";
+            var result = await Http.GetFromJsonAsync<TraversalResultDto>(url);
+
+            if (result is not null)
+            {
+                lastTraversal = result;
+                SetStatus(
+                    $"{result.Algorithm} from {result.StartNode}: {result.VisitOrder.Count} nodes visited, {result.Unreachable.Count} unreachable.",
+                    false);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"{algorithm.ToUpper()} failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // MST
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task RunPrimAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var url = $"{ApiBase}/api/topology/mst/prim?start={Uri.EscapeDataString(selectedStartNode)}";
+            var result = await Http.GetFromJsonAsync<MstResultDto>(url);
+
+            if (result is not null)
+            {
+                lastMst = result;
+
+                mstEdges.Clear();
+                foreach (var e in result.Edges)
+                    mstEdges.Add((e.FromId, e.ToId));
+
+                SetStatus(
+                    $"Prim's MST: {result.EdgeCount} edges, total weight {result.TotalWeight.ToString("0.##")}.",
+                    false);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Prim's failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RunKruskalAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<MstResultDto>(
+                $"{ApiBase}/api/topology/mst/kruskal");
+
+            if (result is not null)
+            {
+                lastMst = result;
+
+                mstEdges.Clear();
+                foreach (var e in result.Edges)
+                    mstEdges.Add((e.FromId, e.ToId));
+
+                SetStatus(
+                    $"Kruskal's MST: {result.EdgeCount} edges, total weight {result.TotalWeight.ToString("0.##")}.",
+                    false);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Kruskal's failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SHORTEST PATH
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task RunPathAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var url = $"{ApiBase}/api/topology/path" +
+                      $"?from={Uri.EscapeDataString(pathFrom)}" +
+                      $"&to={Uri.EscapeDataString(pathTo)}";
+
+            var result = await Http.GetFromJsonAsync<PathResultDto>(url);
+
+            if (result is not null)
+            {
+                lastPath = result;
+
+                pathEdges.Clear();
+                pathNodes.Clear();
+
+                if (result.Found && result.Path.Count >= 2)
+                {
+                    for (int i = 0; i < result.Path.Count - 1; i++)
+                    {
+                        pathEdges.Add((result.Path[i], result.Path[i + 1]));
+                    }
+                    foreach (var nodeId in result.Path)
+                        pathNodes.Add(nodeId);
+                }
+
+                SetStatus(
+                    result.Found
+                        ? $"Path found: {string.Join(" → ", result.Path)} ({result.HopCount} hops)"
+                        : $"No path from {result.FromId} to {result.ToId}.",
+                    !result.Found);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Path finder failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // AVL RANGE QUERY
+    // ─────────────────────────────────────────────────────────────
+
+    private async Task RunRangeQueryAsync()
+    {
+        if (rangeTo <= rangeFrom)
+        {
+            SetStatus("'To' must be greater than 'From'.", true);
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var url = $"{ApiBase}/api/topology/telemetry-range" +
+                      $"?deviceId={Uri.EscapeDataString(rangeDeviceId)}" +
+                      $"&from={Uri.EscapeDataString(rangeFrom.ToUniversalTime().ToString("o"))}" +
+                      $"&to={Uri.EscapeDataString(rangeTo.ToUniversalTime().ToString("o"))}";
+
+            if (!string.IsNullOrWhiteSpace(rangeMetric))
+                url += $"&metric={Uri.EscapeDataString(rangeMetric)}";
+
+            var result = await Http.GetFromJsonAsync<TelemetryRangeResultDto>(url);
+
+            if (result is not null)
+            {
+                lastRange = result;
+                SetStatus(
+                    $"Range query returned {result.Count} readings (AVL height {result.TreeHeight}, {result.TreeValueCount} total).",
+                    false);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Range query failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // DTOs (mirror the API's TopologyDto shapes so the client
+    // does not need a project reference to SmartX.Api)
+    // ─────────────────────────────────────────────────────────────
+
+    public class TopologyNodeDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string MacAddress { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
+        public bool IsOnline { get; set; } = true;
+        public double X { get; set; }
+        public double Y { get; set; }
+        public bool IsGateway { get; set; }
+    }
+
+    public class TopologyEdgeDto
+    {
+        public string FromId { get; set; } = string.Empty;
+        public string ToId { get; set; } = string.Empty;
+        public double Weight { get; set; }
+        public double SignalStrengthDbm { get; set; }
+    }
+
+    public class TopologyGraphDto
+    {
+        public List<TopologyNodeDto> Nodes { get; set; } = new();
+        public List<TopologyEdgeDto> Edges { get; set; } = new();
+        public int NodeCount { get; set; }
+        public int EdgeCount { get; set; }
+    }
+
+    public class TraversalResultDto
+    {
+        public string StartNode { get; set; } = string.Empty;
+        public List<string> VisitOrder { get; set; } = new();
+        public Dictionary<string, int> HopsFromStart { get; set; } = new();
+        public List<string> Unreachable { get; set; } = new();
+        public string Algorithm { get; set; } = string.Empty;
+    }
+
+    public class PathResultDto
+    {
+        public string FromId { get; set; } = string.Empty;
+        public string ToId { get; set; } = string.Empty;
+        public List<string> Path { get; set; } = new();
+        public int HopCount { get; set; }
+        public bool Found { get; set; }
+    }
+
+    public class MstEdgeDto
+    {
+        public string FromId { get; set; } = string.Empty;
+        public string ToId { get; set; } = string.Empty;
+        public double Weight { get; set; }
+    }
+
+    public class MstResultDto
+    {
+        public string Algorithm { get; set; } = string.Empty;
+        public List<MstEdgeDto> Edges { get; set; } = new();
+        public double TotalWeight { get; set; }
+        public int NodeCount { get; set; }
+        public int EdgeCount { get; set; }
+    }
+
+    public class TelemetryRangeResultDto
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string? Metric { get; set; }
+        public DateTime From { get; set; }
+        public DateTime To { get; set; }
+        public List<TelemetryReading> Readings { get; set; } = new();
+        public int Count { get; set; }
+        public int TreeHeight { get; set; }
+        public int TreeValueCount { get; set; }
+    }
+}

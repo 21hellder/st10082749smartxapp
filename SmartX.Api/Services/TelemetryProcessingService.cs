@@ -1,4 +1,3 @@
-
 using Microsoft.AspNetCore.SignalR;
 using SmartX.Api.Hubs;
 using SmartX.Api.Models;
@@ -18,6 +17,7 @@ public sealed class TelemetryProcessingService : BackgroundService
     private readonly SensorStore _sensorStore;
     private readonly IHubContext<TelemetryHub> _hubContext;
     private readonly ILogger<TelemetryProcessingService> _logger;
+    private readonly TelemetryRangeService _rangeService;
 
     public TelemetryProcessingService(
         TelemetryStore store,
@@ -25,7 +25,8 @@ public sealed class TelemetryProcessingService : BackgroundService
         AnomalyDetectionService anomalyDetector,
         SensorStore sensorStore,
         IHubContext<TelemetryHub> hubContext,
-        ILogger<TelemetryProcessingService> logger)
+        ILogger<TelemetryProcessingService> logger,
+        TelemetryRangeService rangeService)
     {
         _store = store;
         _buffer = buffer;
@@ -33,6 +34,7 @@ public sealed class TelemetryProcessingService : BackgroundService
         _sensorStore = sensorStore;
         _hubContext = hubContext;
         _logger = logger;
+        _rangeService = rangeService;
     }
 
     public void Enqueue(TelemetryReading reading)
@@ -116,6 +118,7 @@ public sealed class TelemetryProcessingService : BackgroundService
 
             _buffer.Add(reading);
             _store.Add(reading);
+            _rangeService.Add(reading);
             _anomalyDetector.Analyze(reading);
             _sensorStore.UpdateLastTelemetry(reading.DeviceId);
 

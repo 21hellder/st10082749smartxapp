@@ -1,4 +1,3 @@
-
 using SmartX.Api.Endpoints;
 using SmartX.Api.Hubs;
 using SmartX.Api.Services;
@@ -42,6 +41,10 @@ builder.Services.AddSingleton<DeviceCommandService>();
 // Part 2: predictive recommendations
 builder.Services.AddSingleton<RecommendationEngineService>();
 
+// Part 3: Network Topology and Mesh Routing
+builder.Services.AddSingleton<TelemetryRangeService>();
+builder.Services.AddSingleton<TopologyStore>();
+
 var app = builder.Build();
 
 app.UseCors("SmartXClient");
@@ -65,6 +68,9 @@ app.MapDeviceCommandEndpoints(
 
 // Part 2: recommendation engine
 app.MapRecommendationEndpoints();
+
+// Part 3: topology endpoints
+app.MapTopologyEndpoints();
 
 // SignalR telemetry hub
 app.MapHub<TelemetryHub>("/hubs/telemetry");

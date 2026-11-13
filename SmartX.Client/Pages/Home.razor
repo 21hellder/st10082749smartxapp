@@ -29,8 +29,7 @@
             <h2>Choose an architectural pillar</h2>
 
             <p>
-                Part 1 focuses on sensor data ingestion, telemetry monitoring
-                and validation.
+                All three Smart-X pillars are now implemented.
             </p>
         </div>
 
@@ -84,11 +83,11 @@
 
             </a>
 
-            <div class="pillar-card disabled-card">
+            <a class="pillar-card active-card" href="/network-topology">
 
                 <div class="pillar-top">
-                    <span class="status disabled">DISABLED · FINAL PoE</span>
-                    <span class="lock">LOCKED</span>
+                    <span class="status active">ACTIVE · PART 3</span>
+                    <span class="arrow">→</span>
                 </div>
 
                 <div class="pillar-icon">03</div>
@@ -96,17 +95,19 @@
                 <h3>Network Topology and Mesh Routing</h3>
 
                 <p>
-                    Network topology and mesh routing functionality will
-                    be completed as part of the final PoE.
+                    Visualise the IoT mesh network, run BFS/DFS traversal,
+                    calculate the minimum spanning tree, and query historical
+                    telemetry via an AVL tree.
                 </p>
 
                 <div class="pillar-features">
                     <span>Topology</span>
-                    <span>Mesh Routing</span>
-                    <span>Final PoE</span>
+                    <span>BFS / DFS</span>
+                    <span>Prim / Kruskal</span>
+                    <span>AVL Range</span>
                 </div>
 
-            </div>
+            </a>
 
         </div>
     </section>
@@ -115,12 +116,12 @@
 
         <div class="status-heading">
             <span class="status-dot"></span>
-            <strong>PART 1 &amp; PART 2 SYSTEM STATUS</strong>
+            <strong>PART 1 · PART 2 · PART 3 SYSTEM STATUS</strong>
         </div>
 
         <p>
-            Sensor ingestion and telemetry monitoring are available. Real-time
-            command streaming and history are available.
+            Sensor ingestion, real-time command streaming, and network topology
+            with mesh routing are all available.
         </p>
 
     </section>
@@ -215,7 +216,7 @@
     }
 
     .pillar-card {
-        min-height: 320px;
+        min-height: 340px;
         padding: 28px;
         border-radius: 18px;
         border: 1px solid #1c2633;
@@ -237,10 +238,6 @@
         border-color: #69dfff;
     }
 
-    .disabled-card {
-        opacity: 0.52;
-    }
-
     .pillar-top {
         display: flex;
         align-items: center;
@@ -258,20 +255,9 @@
         color: #5ee6a8;
     }
 
-    .status.disabled {
-        color: #7f8a98;
-    }
-
     .arrow {
         color: #69dfff;
         font-size: 1.4rem;
-    }
-
-    .lock {
-        color: #657180;
-        font-size: 0.65rem;
-        font-weight: 800;
-        letter-spacing: 1px;
     }
 
     .pillar-icon {
